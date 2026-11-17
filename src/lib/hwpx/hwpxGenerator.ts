@@ -20,8 +20,8 @@ export async function generateAiXReportHwpx(
     removeSubmissionGuidePage = true,
   } = options;
 
-  // 1. 원본 .hwpx 파일 로드 및 압축 해제
-  const response = await fetch(templateUrl);
+  // 1. 수정된 템플릿이 즉시 반영되도록 캐시를 무시하고 로드
+  const response = await fetch(templateUrl, { cache: 'no-store' });
   if (!response.ok) {
     throw new Error(`템플릿 파일을 불러올 수 없습니다: ${templateUrl}`);
   }
@@ -42,21 +42,23 @@ export async function generateAiXReportHwpx(
     throw new Error('section0.xml 파싱 중 오류가 발생했습니다.');
   }
 
-  // 2. 마스터 템플릿 자동 정제 (작성방법 박스, (예시) 라벨, 선택적 안내 페이지 제거)
+  // 2. 마스터 템플릿 정제 (작성방법 박스 및 (예시) 라벨 제거)
   sanitizeTemplate(doc, removeSubmissionGuidePage);
 
-  // 3. 본문 및 표 데이터 주입
+  // 3. 본문, 목차, 표 데이터 주입
   populateCoverAndMeta(doc, data);
   populateExecutiveSummary(doc, data.executiveSummary);
   populateChapter1(doc, data);
   populateChapter2(doc, data);
   populateChapter3AndAppendices(doc, data);
 
-  // 4. XML 직렬화 및 OWPML 표준 ZIP 재압축
+  // 4. XML 직렬화 (OWPML 표준 XML 선언부 보존) 및 ZIP 재압축
   const serializer = new XMLSerializer();
-  const updatedXml = serializer.serializeToString(doc);
+  let updatedXml = serializer.serializeToString(doc);
+  if (!updatedXml.startsWith('<?xml')) {
+    updatedXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>' + updatedXml;
+  }
 
-  // OWPML 표준에 따라 mimetype은 압축하지 않고(STORE) 최상위에 유지
   const outZip = new JSZip();
   const mimetypeContent = await zip.file('mimetype')?.async('string');
   if (mimetypeContent) {
@@ -80,25 +82,45 @@ export async function generateAiXReportHwpx(
 }
 
 /* ============================================================================
- * [A] 마스터 템플릿 정제 로직
+ * [A] 마스터 템플릿 정제 (사용자 지정 표 위치 속성은 보존)
  * ========================================================================== */
 function sanitizeTemplate(doc: Document, removeGuidePage: boolean) {
-  // 1) 모든 【작성 개요 및 목적】, 【작성방법】 회색/파란색 안내 박스 제거
-  //    (해당 박스들은 모두 borderFillIDRef="22"인 1x1 테이블로 구성됨)
   const allTables = Array.from(doc.getElementsByTagNameNS(HP_NS, 'tbl'));
+
   for (const tbl of allTables) {
     const firstTc = tbl.getElementsByTagNameNS(HP_NS, 'tc')[0];
+    // 1) 모든 【작성 개요 및 목적】, 【작성방법】 안내 박스(borderFillIDRef="22") 제거
     if (firstTc && firstTc.getAttribute('borderFillIDRef') === '22') {
       const parentPara = findAncestor(tbl, 'p');
       if (parentPara && parentPara.parentNode) {
         parentPara.parentNode.removeChild(parentPara);
       }
+      continue;
+    }
+
+    // 2) 다중 페이지 표 분할이 막히지 않도록 pageBreak="TABLE" 및 noAdjust="1"만 해제
+    if (tbl.getAttribute('pageBreak') === 'TABLE') {
+      tbl.setAttribute('pageBreak', 'CELL');
+    }
+    if (tbl.getAttribute('noAdjust') === '1') {
+      tbl.setAttribute('noAdjust', '0');
+    }
+
+    // 표를 감싸는 부모 문단의 구버전 줄 높이 캐시 제거
+    const parentPara = findAncestor(tbl, 'p');
+    if (parentPara) {
+      const directSegs = Array.from(parentPara.children).filter(
+        (el) => el.localName === 'linesegarray'
+      );
+      directSegs.forEach((seg) => parentPara.removeChild(seg));
     }
   }
 
-  // 2) 2쪽 '정책보고서 작성 및 제출 요령' 안내표 제거 옵션
+  // 3) 2쪽 '정책보고서 작성 및 제출 요령' 안내표 제거 옵션
   if (removeGuidePage) {
-    const guideTbl = findTableById(doc, '1153757507');
+    const guideTbl =
+      findTableById(doc, '1153757507') ||
+      allTables.find((t) => (t.textContent || '').includes('정책보고서 작성 및 제출 요령'));
     if (guideTbl) {
       const parentPara = findAncestor(guideTbl, 'p');
       if (parentPara && parentPara.parentNode) {
@@ -107,7 +129,7 @@ function sanitizeTemplate(doc: Document, removeGuidePage: boolean) {
     }
   }
 
-  // 3) 모든 표 제목(<hp:caption>)에서 '(예시)' 텍스트 run 제거
+  // 4) 모든 표 제목(<hp:caption>)에서 '(예시)' 텍스트 run 제거
   const captions = Array.from(doc.getElementsByTagNameNS(HP_NS, 'caption'));
   for (const cap of captions) {
     const runs = Array.from(cap.getElementsByTagNameNS(HP_NS, 'run'));
@@ -128,8 +150,11 @@ function sanitizeTemplate(doc: Document, removeGuidePage: boolean) {
  * [B] 표지, 제출문, 요약, 목차 데이터 주입
  * ========================================================================== */
 function populateCoverAndMeta(doc: Document, data: AiXReportData) {
-  // 1) 표지 상단 제목 박스 (tbl id="1153757599")
-  const titleTbl = findTableById(doc, '1153757599');
+  const allTables = Array.from(doc.getElementsByTagNameNS(HP_NS, 'tbl'));
+
+  const titleTbl =
+    findTableById(doc, '1153757599') ||
+    allTables.find((t) => (t.textContent || '').includes('개발 및 인증 연구 결과보고서'));
   if (titleTbl) {
     const runs = Array.from(titleTbl.getElementsByTagNameNS(HP_NS, 'run'));
     for (const run of runs) {
@@ -140,11 +165,15 @@ function populateCoverAndMeta(doc: Document, data: AiXReportData) {
     clearLineSegArrays(titleTbl);
   }
 
-  // 2) 표지 하단 메타 표 (tbl id="1153757600")
-  const coverMetaTbl = findTableById(doc, '1153757600');
+  const coverMetaTbl =
+    findTableById(doc, '1153757600') ||
+    allTables.find(
+      (t) =>
+        (t.textContent || '').includes('프로그램명') &&
+        (t.textContent || '').includes('연구책임자')
+    );
   if (coverMetaTbl) {
     const rows = getDirectRows(coverMetaTbl);
-    // Row 0 Col 1: ( 교 과 목 명 )
     if (rows[0]) {
       const tc = getRowCells(rows[0])[1];
       const paras = Array.from(tc.getElementsByTagNameNS(HP_NS, 'p'));
@@ -152,7 +181,6 @@ function populateCoverAndMeta(doc: Document, data: AiXReportData) {
         setParagraphSingleText(doc, paras[1], `(${data.courseTitleKo})`, '116');
       }
     }
-    // Row 1 Col 1: 신규 개발 / 기존 인증 체크박스
     if (rows[1]) {
       const tc = getRowCells(rows[1])[1];
       const paras = Array.from(tc.getElementsByTagNameNS(HP_NS, 'p'));
@@ -161,16 +189,16 @@ function populateCoverAndMeta(doc: Document, data: AiXReportData) {
       if (paras[0]) setParagraphSingleText(doc, paras[0], ` ${newMark} AI-X 교과목 신규 개발`, '116');
       if (paras[1]) setParagraphSingleText(doc, paras[1], ` ${certMark} 기존 AI-X 교과목 인증`, '116');
     }
-    // Row 2 Col 1: 연구책임자
     if (rows[2]) {
       const tc = getRowCells(rows[2])[1];
       setCellLines(doc, tc, [data.professorName], '34', '17');
     }
   }
 
-  // 3) 3쪽 제출문 글상자 (rect id="1153757509")
   const allRects = Array.from(doc.getElementsByTagNameNS(HP_NS, 'rect'));
-  const submitRect = allRects.find((r) => r.getAttribute('id') === '1153757509');
+  const submitRect =
+    allRects.find((r) => r.getAttribute('id') === '1153757509') ||
+    allRects.find((r) => (r.textContent || '').includes('연 구 과 제 명'));
   if (submitRect) {
     const runs = Array.from(submitRect.getElementsByTagNameNS(HP_NS, 'run'));
     for (const run of runs) {
@@ -186,34 +214,66 @@ function populateCoverAndMeta(doc: Document, data: AiXReportData) {
     clearLineSegArrays(submitRect);
   }
 
-  // 4) 목차 및 Ⅱ장 대제목의 '과목명가칭' 치환
+  // 목차 및 Ⅱ장 대제목의 '과목명가칭' 치환 + 목차 점선(tab) 너비 자동 보정
   const allRuns = Array.from(doc.getElementsByTagNameNS(HP_NS, 'run'));
   for (const run of allRuns) {
     const txt = (run.textContent || '').trim();
     if (txt === '과목명') {
       setRunText(run, data.courseTitleKo);
+      // 파란색 예시 표시(charPrIDRef="96")를 제목 본연의 검정 굵은 글씨(charPrIDRef="18")로 통일
+      if (run.getAttribute('charPrIDRef') === '96') {
+        run.setAttribute('charPrIDRef', '18');
+      }
+
+      const parentPara = findAncestor(run, 'p');
+      if (parentPara) {
+        clearLineSegArrays(parentPara);
+        // 목차 줄인 경우(<hp:tab> 포함), 교과목명 길이에 맞춰 점선 탭 너비 재계산
+        const tabEl = parentPara.getElementsByTagNameNS(HP_NS, 'tab')[0];
+        if (tabEl) {
+          const fullHeadingText = `Ⅱ. ${data.courseTitleKo} AI-X 교과목 개발`;
+          const textWidthHwpUnit = estimateHwpTextWidth(fullHeadingText, 1500);
+          const pageNumWidth = 1800; // 우측 페이지 번호 여백
+          const totalLineWidth = 48188; // 본문 가로 폭(HWPUNIT)
+          const newTabWidth = Math.max(2000, totalLineWidth - textWidthHwpUnit - pageNumWidth);
+          tabEl.setAttribute('width', String(Math.round(newTabWidth)));
+        }
+      }
     } else if (txt === '가칭') {
-      setRunText(run, '');
+      run.parentNode?.removeChild(run);
     }
   }
 }
 
+function estimateHwpTextWidth(text: string, fullWidthUnit = 1500): number {
+  let width = 0;
+  for (const ch of text) {
+    const code = ch.charCodeAt(0);
+    if (code > 255) {
+      width += fullWidthUnit;
+    } else {
+      width += fullWidthUnit * 0.52;
+    }
+  }
+  return width;
+}
+
 function populateExecutiveSummary(doc: Document, summaryParagraphs: string[]) {
-  // '요 약' 컨테이너(id="1153757512") 다음 문단들을 찾아 요약 본문 삽입
   const containers = Array.from(doc.getElementsByTagNameNS(HP_NS, 'container'));
-  const summaryHeader = containers.find((c) => c.getAttribute('id') === '1153757512');
+  const summaryHeader =
+    containers.find((c) => c.getAttribute('id') === '1153757512') ||
+    containers.find((c) => (c.textContent || '').replace(/\s+/g, '') === '요약');
   if (!summaryHeader) return;
 
   const headerPara = findAncestor(summaryHeader, 'p');
   if (!headerPara || !headerPara.parentNode) return;
 
-  // 요약 페이지의 빈 문단들을 정리하고 새 문단 삽입
   let cursor = headerPara.nextSibling;
   const emptyParas: Element[] = [];
   while (cursor) {
     if (cursor.nodeType === 1 && (cursor as Element).localName === 'p') {
       const pEl = cursor as Element;
-      if (pEl.getAttribute('pageBreak') === '1') break; // 목차 페이지 도달 시 중단
+      if (pEl.getAttribute('pageBreak') === '1') break;
       emptyParas.push(pEl);
     }
     cursor = cursor.nextSibling;
@@ -221,11 +281,10 @@ function populateExecutiveSummary(doc: Document, summaryParagraphs: string[]) {
 
   const insertBeforeNode = emptyParas[0] || cursor;
   for (const line of summaryParagraphs) {
-    const p = createParagraph(doc, line, '52', '28'); // 본문 휴먼명조 11pt
+    const p = createParagraph(doc, line, '52', '28');
     headerPara.parentNode.insertBefore(p, insertBeforeNode);
   }
 
-  // 기존 빈 줄 일부만 남기고 제거
   emptyParas.slice(2).forEach((p) => p.parentNode?.removeChild(p));
 }
 
@@ -233,8 +292,7 @@ function populateExecutiveSummary(doc: Document, summaryParagraphs: string[]) {
  * [C] Ⅰ장 테이블 주입 ([표 Ⅰ-1], [표 Ⅰ-2])
  * ========================================================================== */
 function populateChapter1(doc: Document, data: AiXReportData) {
-  // [표 Ⅰ-1] 배경 및 추진 목적 요약 (tbl id="1178815043")
-  const t1_1 = findTableById(doc, '1178815043');
+  const t1_1 = findTableByIdOrCaption(doc, '1178815043', 'Ⅰ-1');
   if (t1_1) {
     const rows = getDirectRows(t1_1);
     if (rows[1]) {
@@ -254,9 +312,7 @@ function populateChapter1(doc: Document, data: AiXReportData) {
     }
   }
 
-  // [표 Ⅰ-2] 학과 AI 융합 교육과정 로드맵 (tbl id="1178815045")
-  // 구조: 헤더 2행(row 0~1), 데이터는 2행씩 병합된 구조(row 2~3, 4~5, 6~7, 8~9)
-  const t1_2 = findTableById(doc, '1178815045');
+  const t1_2 = findTableByIdOrCaption(doc, '1178815045', 'Ⅰ-2');
   if (t1_2 && data.roadmapRows.length > 0) {
     const rows = getDirectRows(t1_2);
     const dataPairs = [
@@ -289,16 +345,13 @@ function populateChapter1(doc: Document, data: AiXReportData) {
  * [D] Ⅱ장 테이블 주입 (Ⅱ-1 ~ Ⅱ-5)
  * ========================================================================== */
 function populateChapter2(doc: Document, data: AiXReportData) {
-  // [표 Ⅱ-1.1] 교과목 기본 정보 및 AI-X 유형 진단표 (tbl id="1171751083")
-  const t2_1_1 = findTableById(doc, '1171751083');
+  const t2_1_1 = findTableByIdOrCaption(doc, '1171751083', 'Ⅱ-1.1');
   if (t2_1_1) {
     const rows = getDirectRows(t2_1_1);
-    // Row 1: 교과목명 (국문/영문)
     if (rows[1]) {
       const cells = getRowCells(rows[1]);
       setCellLines(doc, cells[1], [data.courseTitleKo, data.courseTitleEn], '31', '24');
     }
-    // Row 3: 학년/학기, 이수구분, 학점, 이론, 실습
     if (rows[3]) {
       const cells = getRowCells(rows[3]);
       setCellLines(doc, cells[0], [data.targetGradeSemester], '31', '24');
@@ -308,13 +361,11 @@ function populateChapter2(doc: Document, data: AiXReportData) {
       setCellLines(doc, cells[3], [String(data.theoryHours)], '31', '98');
       setCellLines(doc, cells[4], [String(data.practiceHours)], '31', '98');
     }
-    // Row 5: 담당교원 성명, 소속
     if (rows[5]) {
       const cells = getRowCells(rows[5]);
       setCellLines(doc, cells[0], [data.professorName], '31', '24');
       setCellLines(doc, cells[1], [`${data.department} ${data.major}`.trim()], '31', '24');
     }
-    // Row 6: AI-X 4대 유형 체크박스
     if (rows[6]) {
       const cells = getRowCells(rows[6]);
       const types: Array<AiXReportData['selectedCourseTypes'][number]> = [
@@ -331,15 +382,13 @@ function populateChapter2(doc: Document, data: AiXReportData) {
         }
       });
     }
-    // Row 7: 유형 진단 근거
     if (rows[7]) {
       const cells = getRowCells(rows[7]);
       setCellLines(doc, cells[1], data.typeDiagnosisRationale, '68', '24');
     }
   }
 
-  // [표 Ⅱ-1.2] 전공 문제 정의 및 연계 모델 매핑 (tbl id="1178815051")
-  const t2_1_2 = findTableById(doc, '1178815051');
+  const t2_1_2 = findTableByIdOrCaption(doc, '1178815051', 'Ⅱ-1.2');
   if (t2_1_2) {
     const rows = getDirectRows(t2_1_2);
     if (rows[1]) {
@@ -364,8 +413,7 @@ function populateChapter2(doc: Document, data: AiXReportData) {
     }
   }
 
-  // [표 Ⅱ-1.3] 교육목표 정렬 및 통합 학습성과 (tbl id="1178815055")
-  const t2_1_3 = findTableById(doc, '1178815055');
+  const t2_1_3 = findTableByIdOrCaption(doc, '1178815055', 'Ⅱ-1.3');
   if (t2_1_3) {
     const rows = getDirectRows(t2_1_3);
     if (rows[1]) setCellLines(doc, getRowCells(rows[1])[1], [data.table2_1_3.majorObjective], '64', '24');
@@ -373,8 +421,7 @@ function populateChapter2(doc: Document, data: AiXReportData) {
     if (rows[3]) setCellLines(doc, getRowCells(rows[3])[1], [data.table2_1_3.integratedLearningOutcome], '64', '24');
   }
 
-  // [표 Ⅱ-1.4] 5대 최소 요건 자체점검 (tbl id="1178815059")
-  const t2_1_4 = findTableById(doc, '1178815059');
+  const t2_1_4 = findTableByIdOrCaption(doc, '1178815059', 'Ⅱ-1.4');
   if (t2_1_4) {
     const rows = getDirectRows(t2_1_4);
     const reqs = [
@@ -393,8 +440,7 @@ function populateChapter2(doc: Document, data: AiXReportData) {
     });
   }
 
-  // [표 Ⅱ-2.1] 1주차 학생 진입 수준 진단 비계 계획 (tbl id="1178815065")
-  const t2_2_1 = findTableById(doc, '1178815065');
+  const t2_2_1 = findTableByIdOrCaption(doc, '1178815065', 'Ⅱ-2.1');
   if (t2_2_1) {
     const rows = getDirectRows(t2_2_1);
     const plans = [
@@ -410,8 +456,7 @@ function populateChapter2(doc: Document, data: AiXReportData) {
     });
   }
 
-  // [표 Ⅱ-2.2] 담당 교원 AI 교수역량 자가진단 결과 (tbl id="1178815069")
-  const t2_2_2 = findTableById(doc, '1178815069');
+  const t2_2_2 = findTableByIdOrCaption(doc, '1178815069', 'Ⅱ-2.2');
   if (t2_2_2) {
     const rows = getDirectRows(t2_2_2);
     const areas = [
@@ -434,7 +479,6 @@ function populateChapter2(doc: Document, data: AiXReportData) {
         setCellLines(doc, cells[4], area.plans, '61', '24');
       }
     });
-    // Row 6: 종합
     if (rows[6]) {
       const cells = getRowCells(rows[6]);
       const stageKoMap = { Acquire: '(기초 단계)', Deepen: '(심화 단계)', Create: '(확장 단계)' };
@@ -450,20 +494,20 @@ function populateChapter2(doc: Document, data: AiXReportData) {
     }
   }
 
-  // [표 Ⅱ-3.1] 15주 주차별 수업운영 계획 (tbl id="1178815076")
-  const t2_3_1 = findTableById(doc, '1178815076');
+  const t2_3_1 = findTableByIdOrCaption(doc, '1178815076', 'Ⅱ-3.1');
   if (t2_3_1) {
     const rows = getDirectRows(t2_3_1);
     data.weeklyPlans.forEach((wp) => {
       const targetRow = rows[wp.week];
       if (!targetRow) return;
       const cells = getRowCells(targetRow);
-      // 제목(진하게 charPrIDRef="81") + 세부내용(일반 charPrIDRef="24") 혼합 구성
-      clearElementChildren(getSubList(cells[1]));
       const subList = getSubList(cells[1]);
-      subList.appendChild(createParagraph(doc, wp.title, '66', '81'));
-      for (const detail of wp.details) {
-        subList.appendChild(createParagraph(doc, detail, '61', '24'));
+      if (subList) {
+        clearElementChildren(subList);
+        subList.appendChild(createParagraph(doc, wp.title, '66', '81'));
+        for (const detail of wp.details) {
+          subList.appendChild(createParagraph(doc, detail, '61', '24'));
+        }
       }
       setCellLines(doc, cells[2], [wp.method], '31', '24');
       setCellLines(doc, cells[3], wp.equipment.split(',').map((s) => s.trim()), '31', '24');
@@ -471,7 +515,6 @@ function populateChapter2(doc: Document, data: AiXReportData) {
     });
   }
 
-  // [표 Ⅱ-3.2] 완결형 AI-X 모듈 상세 설계서 (캡션으로 탐색)
   const t2_3_2 = findTableByCaption(doc, 'Ⅱ-3.2');
   if (t2_3_2) {
     const rows = getDirectRows(t2_3_2);
@@ -494,7 +537,6 @@ function populateChapter2(doc: Document, data: AiXReportData) {
     });
   }
 
-  // [표 Ⅱ-3.3] 수업 기능 중심 AI 도구 선정 및 안전성 (가변 행 지원)
   const t2_3_3 = findTableByCaption(doc, 'Ⅱ-3.3');
   if (t2_3_3 && data.aiToolSafetyRows.length > 0) {
     syncDynamicRows(doc, t2_3_3, 1, data.aiToolSafetyRows.length, (rowEl, idx) => {
@@ -508,7 +550,6 @@ function populateChapter2(doc: Document, data: AiXReportData) {
     });
   }
 
-  // [표 Ⅱ-4.1] 다차원 평가 루브릭
   const t2_4_1 = findTableByCaption(doc, 'Ⅱ-4.1');
   if (t2_4_1) {
     const rows = getDirectRows(t2_4_1);
@@ -525,10 +566,8 @@ function populateChapter2(doc: Document, data: AiXReportData) {
     });
   }
 
-  // [표 Ⅱ-4.2] 학생 제출용 과정 증빙 서식 내 결과 검증표 예시 커스터마이징
   const t2_4_2 = findTableByCaption(doc, 'Ⅱ-4.2');
   if (t2_4_2) {
-    // 내부 중첩 테이블 중 결과 검증표 행 채우기
     const nestedTables = Array.from(t2_4_2.getElementsByTagNameNS(HP_NS, 'tbl'));
     if (nestedTables[1]) {
       const vRows = getDirectRows(nestedTables[1]);
@@ -542,7 +581,6 @@ function populateChapter2(doc: Document, data: AiXReportData) {
     }
   }
 
-  // [표 Ⅱ-4.3] 형성평가 프롬프트 템플릿
   const t2_4_3 = findTableByCaption(doc, 'Ⅱ-4.3');
   if (t2_4_3) {
     const rows = getDirectRows(t2_4_3);
@@ -558,13 +596,11 @@ function populateChapter2(doc: Document, data: AiXReportData) {
     });
   }
 
-  // [표 Ⅱ-5.1] 디지털 배지 연계 정보
   const t2_5_1 = findTableByCaption(doc, 'Ⅱ-5.1');
   if (t2_5_1) {
     fillDigitalBadgeTable(doc, t2_5_1, data.digitalBadge);
   }
 
-  // [표 Ⅱ-5.2] 2027학년도 정규 교육과정 개설 및 학사 운영 계획
   const t2_5_2 = findTableByCaption(doc, 'Ⅱ-5.2');
   if (t2_5_2) {
     const rows = getDirectRows(t2_5_2);
@@ -587,7 +623,6 @@ function populateChapter2(doc: Document, data: AiXReportData) {
  * [E] Ⅲ(Ⅳ)장 결론 및 부록 데이터 주입
  * ========================================================================== */
 function populateChapter3AndAppendices(doc: Document, data: AiXReportData) {
-  // [표 Ⅳ-1] AI-X 교과목 개발 연구 핵심 성과 총괄
   const t4_1 = findTableByCaption(doc, 'Ⅳ-1');
   if (t4_1) {
     const rows = getDirectRows(t4_1);
@@ -637,7 +672,6 @@ function populateChapter3AndAppendices(doc: Document, data: AiXReportData) {
     }
   }
 
-  // [표 Ⅳ-2] 3대 영역 기대효과 및 향후 발전 방향
   const t4_2 = findTableByCaption(doc, 'Ⅳ-2');
   if (t4_2) {
     const rows = getDirectRows(t4_2);
@@ -653,7 +687,6 @@ function populateChapter3AndAppendices(doc: Document, data: AiXReportData) {
     }
   }
 
-  // <부록 3> 이수 실적 목록표 (가변 행)
   const allTables = Array.from(doc.getElementsByTagNameNS(HP_NS, 'tbl'));
   const trainingTbl = allTables.find((t) => (t.textContent || '').includes('주관/주최기관'));
   if (trainingTbl && data.trainingRecords.length > 0) {
@@ -669,14 +702,14 @@ function populateChapter3AndAppendices(doc: Document, data: AiXReportData) {
     });
   }
 
-// <부록 4> 디지털 배지 상세정보 서식 (본문 [표 Ⅱ-5.1]과 자동 동기화)
   const t2_5_1 = findTableByCaption(doc, 'Ⅱ-5.1');
   const badgeAppendixTbl = allTables.find(
     (t) =>
       (t.textContent || '').includes('배지명') &&
       (t.textContent || '').includes('지식/기술') &&
       t !== t2_5_1
-  );  if (badgeAppendixTbl) {
+  );
+  if (badgeAppendixTbl) {
     fillDigitalBadgeTable(doc, badgeAppendixTbl, data.digitalBadge);
   }
 }
@@ -707,6 +740,14 @@ function findTableByCaption(doc: Document, keyword: string): Element | undefined
     const cap = t.getElementsByTagNameNS(HP_NS, 'caption')[0];
     return cap && (cap.textContent || '').includes(keyword);
   });
+}
+
+function findTableByIdOrCaption(
+  doc: Document,
+  id: string,
+  captionKeyword: string
+): Element | undefined {
+  return findTableById(doc, id) || findTableByCaption(doc, captionKeyword);
 }
 
 function getDirectRows(tbl: Element): Element[] {
@@ -776,7 +817,6 @@ function createParagraph(
 
   run.appendChild(t);
   p.appendChild(run);
-  // 주의: <hp:linesegarray>를 의도적으로 생성하지 않음 -> 한글 프로그램이 열 때 줄바꿈 및 표 높이를 자동 재계산함
   return p;
 }
 
@@ -791,7 +831,6 @@ function syncDynamicRows(
   const templateRow = rows[templateRowIdx];
   if (!templateRow) return;
 
-  // 기존 데이터 행 정리 후 필요한 개수만큼 복제
   for (let i = rows.length - 1; i > templateRowIdx; i--) {
     tbl.removeChild(rows[i]);
   }
@@ -801,6 +840,17 @@ function syncDynamicRows(
   }
 
   const updatedRows = getDirectRows(tbl);
+  tbl.setAttribute('rowCnt', String(updatedRows.length));
+  updatedRows.forEach((tr, rIdx) => {
+    const cells = getRowCells(tr);
+    cells.forEach((tc) => {
+      const cellAddr = tc.getElementsByTagNameNS(HP_NS, 'cellAddr')[0];
+      if (cellAddr) {
+        cellAddr.setAttribute('rowAddr', String(rIdx));
+      }
+    });
+  });
+
   for (let i = 0; i < targetCount; i++) {
     populateFn(updatedRows[templateRowIdx + i], i);
   }
