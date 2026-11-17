@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   BookOpen,
   CheckCircle2,
@@ -9,8 +9,10 @@ import {
   Download,
   FileText,
   HelpCircle,
+  KeyRound,
   Layers,
   Loader2,
+  Lock,
   Plus,
   ShieldCheck,
   Sparkles,
@@ -39,7 +41,17 @@ const STEPS = [
   { id: 6, title: '성과·개설계획', icon: Award },
 ];
 
+const STORAGE_KEY = 'gnu_aix_verified_passcode';
+
 export default function AiXReportGeneratorPage() {
+  // 인증 상태 관리
+  const [passcode, setPasscode] = useState<string>('');
+  const [passcodeInput, setPasscodeInput] = useState<string>('');
+  const [isUnlocked, setIsUnlocked] = useState<boolean>(false);
+  const [isCheckingAuth, setIsCheckingAuth] = useState<boolean>(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  // 위저드 및 보고서 상태 관리
   const [currentStep, setCurrentStep] = useState<number>(1);
   const [input, setInput] = useState<WizardFormInput>(SAMPLE_WIZARD_INPUT);
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
@@ -48,13 +60,51 @@ export default function AiXReportGeneratorPage() {
   const [report, setReport] = useState<AiXReportData | null>(null);
   const [removeGuidePage, setRemoveGuidePage] = useState<boolean>(true);
 
-  const preset = FIELD_PRESETS[input.academicField];
+  // 기존 세션 인증 확인
+  useEffect(() => {
+    const saved = sessionStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      setPasscode(saved);
+      setIsUnlocked(true);
+    }
+  }, []);
 
-  // 루브릭 배점 합계 및 인간 책무성(결과 검증 + 인간 판단) 비중 계산
+  const handleUnlock = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    setIsCheckingAuth(true);
+    try {
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passcode: passcodeInput }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || '입장 코드 확인에 실패했습니다.');
+      }
+      const trimmed = passcodeInput.trim();
+      sessionStorage.setItem(STORAGE_KEY, trimmed);
+      setPasscode(trimmed);
+      setIsUnlocked(true);
+    } catch (err: unknown) {
+      setAuthError(err instanceof Error ? err.message : '인증 오류가 발생했습니다.');
+    } finally {
+      setIsCheckingAuth(false);
+    }
+  };
+
+  const handleLockOut = () => {
+    sessionStorage.removeItem(STORAGE_KEY);
+    setPasscode('');
+    setPasscodeInput('');
+    setIsUnlocked(false);
+  };
+
+  const preset = FIELD_PRESETS[input.academicField];
   const totalWeight = input.rubricWeights.reduce((a, b) => a + b, 0);
   const humanAccountabilityRatio = (input.rubricWeights[3] || 0) + (input.rubricWeights[4] || 0);
 
-  // 교원 자가진단 영역별 평균 계산
   const getAreaAvg = (areaIdx: number) => {
     const slice = input.facultyScores.slice((areaIdx - 1) * 4, areaIdx * 4);
     const avg = slice.reduce((a, b) => a + b, 0) / 4;
@@ -81,9 +131,13 @@ export default function AiXReportGeneratorPage() {
       const res = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ input }),
+        body: JSON.stringify({ input, passcode }),
       });
       const data = await res.json();
+      if (res.status === 401) {
+        handleLockOut();
+        throw new Error(data.error || '인증이 만료되었습니다. 입장 코드를 다시 입력해 주세요.');
+      }
       if (!res.ok) {
         throw new Error(data.error || 'AI 보고서 생성에 실패했습니다.');
       }
@@ -118,6 +172,66 @@ export default function AiXReportGeneratorPage() {
       setIsDownloading(false);
     }
   };
+
+  // 잠금 화면 렌더링
+  if (!isUnlocked) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4">
+        <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 shadow-lg">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-700 text-white shadow-sm">
+            <KeyRound className="h-6 w-6" />
+          </div>
+          <h1 className="mt-4 text-center text-xl font-bold text-slate-900">
+            경상국립대학교 AI-X 결과보고서 생성기
+          </h1>
+          <p className="mt-1.5 text-center text-xs leading-relaxed text-slate-500">
+            2026학년도 국립대학육성사업 참여 교원 전용 시스템입니다.
+            <br />
+            교육혁신처에서 안내받으신 <strong>참여 입장 코드</strong>를 입력해 주세요.
+          </p>
+
+          <form onSubmit={handleUnlock} className="mt-6 space-y-4">
+            <div>
+              <label className="mb-1.5 block text-xs font-bold text-slate-700">
+                참여 교원 입장 코드
+              </label>
+              <input
+                type="password"
+                required
+                placeholder="입장 코드를 입력하세요"
+                value={passcodeInput}
+                onChange={(e) => setPasscodeInput(e.target.value)}
+                className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm tracking-wider focus:border-blue-600 focus:outline-none"
+              />
+            </div>
+
+            {authError && (
+              <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+                {authError}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={isCheckingAuth || !passcodeInput.trim()}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-700 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-blue-800 disabled:opacity-50"
+            >
+              {isCheckingAuth ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <CheckCircle2 className="h-4 w-4" />
+              )}
+              <span>인증 후 보고서 작성 시작하기</span>
+            </button>
+          </form>
+
+          <p className="mt-6 border-t border-slate-100 pt-4 text-center text-[11px] text-slate-400">
+            문의: 경상국립대학교 교육혁신처 교육과정과
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -159,6 +273,15 @@ export default function AiXReportGeneratorPage() {
             >
               샘플 예시 불러오기
             </button>
+            <button
+              type="button"
+              onClick={handleLockOut}
+              title="화면 잠금"
+              className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+            >
+              <Lock className="h-3.5 w-3.5" />
+              <span>잠금</span>
+            </button>
           </div>
         </div>
       </header>
@@ -170,10 +293,8 @@ export default function AiXReportGeneratorPage() {
           </div>
         )}
 
-        {/* 결과 보고서 검토·수정 및 HWPX 다운로드 모드 */}
         {report ? (
           <div className="space-y-6">
-            {/* 상단 다운로드 액션 바 */}
             <div className="flex flex-col justify-between gap-4 rounded-2xl border border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 p-6 shadow-sm sm:flex-row sm:items-center">
               <div>
                 <div className="flex items-center gap-2 text-sm font-semibold text-blue-700">
@@ -214,9 +335,7 @@ export default function AiXReportGeneratorPage() {
               </div>
             </div>
 
-            {/* 섹션별 실시간 검토 및 직접 수정 카드 */}
             <div className="grid gap-6">
-              {/* 1. 요약 */}
               <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                 <h3 className="mb-3 flex items-center gap-2 text-base font-bold text-slate-900">
                   <FileText className="h-4 w-4 text-blue-600" />
@@ -238,7 +357,6 @@ export default function AiXReportGeneratorPage() {
                 />
               </section>
 
-              {/* 2. Ⅰ장 및 Ⅱ-1장 핵심 설계 검토 */}
               <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                 <h3 className="mb-4 text-base font-bold text-slate-900">
                   Ⅰ~Ⅱ-1. 전공-AI 교육목표 정렬 및 통합 학습성과
@@ -301,7 +419,6 @@ export default function AiXReportGeneratorPage() {
                 </div>
               </section>
 
-              {/* 3. Ⅱ-3장 15주 수업계획 미리보기 */}
               <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                 <h3 className="mb-4 text-base font-bold text-slate-900">
                   Ⅱ-3. 15주 전체 주차별 수업운영 계획 ([표 Ⅱ-3.1])
@@ -352,7 +469,6 @@ export default function AiXReportGeneratorPage() {
                 </div>
               </section>
 
-              {/* 4. 디지털 배지 및 결론 요약 */}
               <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                 <h3 className="mb-3 text-base font-bold text-slate-900">
                   Ⅱ-5 & 부록 4. 경상국립대학교 GNU-AXIS 디지털 배지 정보
@@ -406,9 +522,7 @@ export default function AiXReportGeneratorPage() {
             </div>
           </div>
         ) : (
-          /* 6단계 위저드 입력 폼 모드 */
           <div className="space-y-6">
-            {/* 상단 스텝 네비게이션 */}
             <nav className="grid grid-cols-2 gap-2 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:grid-cols-6">
               {STEPS.map((step) => {
                 const Icon = step.icon;
@@ -436,9 +550,7 @@ export default function AiXReportGeneratorPage() {
               })}
             </nav>
 
-            {/* 단계별 입력 본문 */}
             <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
-              {/* STEP 1: 기본 정보 및 유형 */}
               {currentStep === 1 && (
                 <div className="space-y-6">
                   <div>
@@ -609,7 +721,6 @@ export default function AiXReportGeneratorPage() {
                     </div>
                   </div>
 
-                  {/* AI-X 4대 유형 선택 */}
                   <div>
                     <label className="mb-2 block text-xs font-bold text-slate-700">
                       AI-X 교과목 유형 진단 (주된 성격 1~2개 복수 선택 가능)
@@ -645,7 +756,6 @@ export default function AiXReportGeneratorPage() {
                     </div>
                   </div>
 
-                  {/* 학생 목표 역량 수준 */}
                   <div>
                     <label className="mb-2 block text-xs font-bold text-slate-700">
                       학생 목표 역량 수준 (가이드라인 3단계 체계)
@@ -694,7 +804,6 @@ export default function AiXReportGeneratorPage() {
                 </div>
               )}
 
-              {/* STEP 2: 전공 문제 정의 및 전공-AI 연계 설계 */}
               {currentStep === 2 && (
                 <div className="space-y-6">
                   <div>
@@ -706,13 +815,12 @@ export default function AiXReportGeneratorPage() {
                     </p>
                   </div>
 
-                  {/* 계열별 맞춤 가이드 박스 */}
                   <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-4 text-xs text-blue-950">
                     <div className="flex items-center gap-1.5 font-bold text-blue-800">
                       <HelpCircle className="h-4 w-4" />
                       <span>[{input.academicField} 계열] 맞춤형 설계 가이드</span>
                     </div>
-                    <ul className="mt-2 space-y-1 pl-5 list-disc">
+                    <ul className="mt-2 list-disc space-y-1 pl-5">
                       <li>
                         <strong>지향 방향:</strong> {preset.direction}
                       </li>
@@ -765,7 +873,6 @@ export default function AiXReportGeneratorPage() {
                 </div>
               )}
 
-              {/* STEP 3: 학생 진입 수준 지원 및 교원 역량 자가진단 */}
               {currentStep === 3 && (
                 <div className="space-y-6">
                   <div>
@@ -777,7 +884,6 @@ export default function AiXReportGeneratorPage() {
                     </p>
                   </div>
 
-                  {/* 5대 영역 실시간 요약 배지 */}
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
                     {[1, 2, 3, 4, 5].map((idx) => {
                       const info = getAreaAvg(idx);
@@ -794,7 +900,6 @@ export default function AiXReportGeneratorPage() {
                     })}
                   </div>
 
-                  {/* 20문항 체크리스트 */}
                   <div className="max-h-96 overflow-y-auto rounded-xl border border-slate-200">
                     <table className="w-full text-left text-xs">
                       <thead className="sticky top-0 bg-slate-100 text-slate-700">
@@ -839,7 +944,6 @@ export default function AiXReportGeneratorPage() {
                     </table>
                   </div>
 
-                  {/* 학생 비계 지원 특이사항 */}
                   <div>
                     <label className="mb-1.5 block text-xs font-bold text-slate-700">
                       1주차 학생 진단 후 수준별 비계(Scaffolding) 지원 메모 (선택)
@@ -852,7 +956,6 @@ export default function AiXReportGeneratorPage() {
                     />
                   </div>
 
-                  {/* 부록 3 연수 이수 실적 */}
                   <div>
                     <div className="mb-2 flex items-center justify-between">
                       <label className="text-xs font-bold text-slate-700">
@@ -952,7 +1055,6 @@ export default function AiXReportGeneratorPage() {
                 </div>
               )}
 
-              {/* STEP 4: 15주 수업계획 및 완결형 AI-X 모듈·도구 설계 */}
               {currentStep === 4 && (
                 <div className="space-y-6">
                   <div>
@@ -1028,7 +1130,6 @@ export default function AiXReportGeneratorPage() {
                 </div>
               )}
 
-              {/* STEP 5: 다차원 평가 루브릭 및 형성평가 운영 */}
               {currentStep === 5 && (
                 <div className="space-y-6">
                   <div>
@@ -1040,7 +1141,6 @@ export default function AiXReportGeneratorPage() {
                     </p>
                   </div>
 
-                  {/* 실시간 배점 상태 표시기 */}
                   <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
                     <div className="text-xs">
                       <span className="font-semibold text-slate-600">전체 배점 합계: </span>
@@ -1068,7 +1168,6 @@ export default function AiXReportGeneratorPage() {
                     </div>
                   </div>
 
-                  {/* 7개 영역 배점 조정 */}
                   <div className="space-y-3">
                     {DEFAULT_RUBRIC_WEIGHTS.map((item, idx) => (
                       <div key={item.area} className="flex items-center gap-4">
@@ -1150,7 +1249,6 @@ export default function AiXReportGeneratorPage() {
                 </div>
               )}
 
-              {/* STEP 6: 성과 가치화(디지털 배지) 및 2027학년도 개설 계획 */}
               {currentStep === 6 && (
                 <div className="space-y-6">
                   <div>
@@ -1238,7 +1336,6 @@ export default function AiXReportGeneratorPage() {
                 </div>
               )}
 
-              {/* 하단 이전/다음/AI 생성 버튼 */}
               <div className="mt-8 flex items-center justify-between border-t border-slate-200 pt-5">
                 <button
                   type="button"
@@ -1269,7 +1366,7 @@ export default function AiXReportGeneratorPage() {
                     {isGenerating ? (
                       <>
                         <Loader2 className="h-4 w-4 animate-spin" />
-                        <span>AI가 25매 이상 분량의 보고서 초안을 작성 중입니다...</span>
+                        <span>AI가 세부 근거 및 수업 전략이 담긴 보고서 초안을 작성 중입니다...</span>
                       </>
                     ) : (
                       <>
