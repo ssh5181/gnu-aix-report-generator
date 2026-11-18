@@ -7,7 +7,7 @@ import {
   WizardFormInput,
 } from '@/constants/axisPresets';
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 function calcStage(avg: number): FacultyStage {
   if (avg < 2.5) return 'Acquire';
@@ -363,6 +363,7 @@ export async function POST(req: NextRequest) {
           responseMimeType: 'application/json',
           responseSchema: part1Schema,
           temperature: 0.35,
+          thinkingConfig: { thinkingBudget: 0 },
         },
       }),
       ai.models.generateContent({
@@ -373,6 +374,7 @@ export async function POST(req: NextRequest) {
           responseMimeType: 'application/json',
           responseSchema: part2Schema,
           temperature: 0.35,
+	  thinkingConfig: { thinkingBudget: 0 },
         },
       }),
     ]);
