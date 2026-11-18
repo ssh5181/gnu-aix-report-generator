@@ -291,9 +291,9 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
+    const inputCode = String(body.passcode || '').trim();
 
-const expectedPasscode = '4877';
-    if (!body.passcode || String(body.passcode).trim() !== expectedPasscode.trim()) {
+    if (inputCode !== '4877') {
       return NextResponse.json(
         { error: '유효하지 않은 참여 코드입니다. 다시 로그인해 주세요.' },
         { status: 401 }

@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(req: NextRequest) {
   try {
-    const { passcode } = await req.json();
+    const body = await req.json();
+    const inputCode = String(body.passcode || '').trim();
 
-    if (!passcode || String(passcode).trim() !== '4877') {
+    if (inputCode !== '4877') {
       return NextResponse.json(
-        { error: '입장 코드가 일치하지 않습니다. 교육혁신처 안내 메일의 참여 코드를 확인해 주세요.' },
+        { error: '입장 코드가 일치하지 않습니다. 참여 코드 4자리를 다시 확인해 주세요.' },
         { status: 401 }
       );
     }
