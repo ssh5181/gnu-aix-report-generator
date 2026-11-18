@@ -69,18 +69,16 @@ export default function AiXReportGeneratorPage() {
     }
   }, []);
 
-  const handleUnlock = async (e: React.FormEvent) => {
+const handleUnlock = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
     setIsCheckingAuth(true);
     try {
-      const res = await fetch('/api/generate', {
+      const trimmed = passcodeInput.trim();
+      const res = await fetch('/api/auth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-            input,
-            passcode: passcode || sessionStorage.getItem('gnu_aix_verified_passcode') || passcodeInput.trim(),
-      }),
+        body: JSON.stringify({ passcode: trimmed }),
       });
       const rawBody = await res.text();
       let data;
@@ -92,7 +90,6 @@ export default function AiXReportGeneratorPage() {
       if (!res.ok) {
         throw new Error(data.error || '입장 코드 확인에 실패했습니다.');
       }
-      const trimmed = passcodeInput.trim();
       sessionStorage.setItem(STORAGE_KEY, trimmed);
       setPasscode(trimmed);
       setIsUnlocked(true);
@@ -101,13 +98,6 @@ export default function AiXReportGeneratorPage() {
     } finally {
       setIsCheckingAuth(false);
     }
-  };
-
-  const handleLockOut = () => {
-    sessionStorage.removeItem(STORAGE_KEY);
-    setPasscode('');
-    setPasscodeInput('');
-    setIsUnlocked(false);
   };
 
   const preset = FIELD_PRESETS[input.academicField];
