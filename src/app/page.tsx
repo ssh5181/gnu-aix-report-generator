@@ -74,12 +74,18 @@ export default function AiXReportGeneratorPage() {
     setAuthError(null);
     setIsCheckingAuth(true);
     try {
-      const res = await fetch('/api/auth', {
+      const res = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ passcode: passcodeInput }),
+        body: JSON.stringify({ input, passcode }),
       });
-      const data = await res.json();
+      const rawBody = await res.text();
+      let data;
+      try {
+        data = JSON.parse(rawBody);
+      } catch {
+        throw new Error(`서버 응답 지연 또는 오류 (HTTP ${res.status}): 잠시 후 다시 시도해 주세요.`);
+      }
       if (!res.ok) {
         throw new Error(data.error || '입장 코드 확인에 실패했습니다.');
       }

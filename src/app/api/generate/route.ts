@@ -7,7 +7,6 @@ import {
   WizardFormInput,
 } from '@/constants/axisPresets';
 
-// Vercel 등 클라우드 배포 시 AI 보고서 생성(약 20~35초) 중 타임아웃 방지
 export const maxDuration = 60;
 
 function calcStage(avg: number): FacultyStage {
@@ -37,7 +36,10 @@ const stringArraySchema: Schema = {
   items: { type: Type.STRING },
 };
 
-const reportResponseSchema: Schema = {
+/* ============================================================================
+ * Part 1 스키마: 요약, Ⅰ장(배경·로드맵), Ⅱ-1장(연계·목표·5대요건), Ⅱ-2장(진단·교원역량)
+ * ========================================================================== */
+const part1Schema: Schema = {
   type: Type.OBJECT,
   properties: {
     executiveSummary: stringArraySchema,
@@ -131,6 +133,26 @@ const reportResponseSchema: Schema = {
       },
       required: ['area1', 'area2', 'area3', 'area4', 'area5', 'overallPlan'],
     },
+  },
+  required: [
+    'executiveSummary',
+    'table1_1',
+    'roadmapRows',
+    'typeDiagnosisRationale',
+    'table2_1_2',
+    'table2_1_3',
+    'table2_1_4_requirements',
+    'scaffoldingPlans',
+    'facultyPlansByArea',
+  ],
+};
+
+/* ============================================================================
+ * Part 2 스키마: Ⅱ-3장(15주·모듈·도구), Ⅱ-4장(루브릭·증빙·피드백), Ⅱ-5장 & Ⅳ장(배지·개설·결론)
+ * ========================================================================== */
+const part2Schema: Schema = {
+  type: Type.OBJECT,
+  properties: {
     weeklyPlans: {
       type: Type.ARRAY,
       items: {
@@ -245,15 +267,6 @@ const reportResponseSchema: Schema = {
     },
   },
   required: [
-    'executiveSummary',
-    'table1_1',
-    'roadmapRows',
-    'typeDiagnosisRationale',
-    'table2_1_2',
-    'table2_1_3',
-    'table2_1_4_requirements',
-    'scaffoldingPlans',
-    'facultyPlansByArea',
     'weeklyPlans',
     'moduleDesign',
     'aiToolSafetyRows',
@@ -272,12 +285,21 @@ export async function POST(req: NextRequest) {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
-        { error: '서버에 GEMINI_API_KEY가 설정되지 않았습니다. .env.local 파일을 확인해 주세요.' },
+        { error: '서버에 GEMINI_API_KEY가 설정되지 않았습니다.' },
         { status: 500 }
       );
     }
 
     const body = await req.json();
+
+    const expectedPasscode = process.env.ACCESS_PASSCODE || 'GNU2026AXIS';
+    if (!body.passcode || String(body.passcode).trim() !== expectedPasscode.trim()) {
+      return NextResponse.json(
+        { error: '유효하지 않은 참여 코드입니다. 다시 로그인해 주세요.' },
+        { status: 401 }
+      );
+    }
+
     const input: WizardFormInput = body.input;
     if (!input || !input.courseTitleKo) {
       return NextResponse.json({ error: '필수 교과목 입력 정보가 누락되었습니다.' }, { status: 400 });
@@ -302,24 +324,12 @@ export async function POST(req: NextRequest) {
     });
 
     const systemInstruction = `당신은 경상국립대학교 교육혁신처의 'AI 융합 교육과정(AXIS) 설계 전문가'입니다.
-교수자가 입력한 전공 교과목 아이디어를 바탕으로, 2026학년도 국립대학육성사업 「AI 융합 교육과정 개발 및 인증 연구 결과보고서」의 모든 표와 항목을 교육공학적·행정적 기준에 맞춰 작성해야 합니다.
+교수자가 입력한 전공 교과목 아이디어를 바탕으로, 2026학년도 국립대학육성사업 「AI 융합 교육과정 개발 및 인증 연구 결과보고서」의 모든 표와 항목을 교육공학적·행정적 기준에 맞춰 개조식(~함, ~임, ~운영함)으로 작성하십시오.
+각 표의 셀에는 반드시 ① 전공 이론·현장 수요 기반의 '설계 근거(Why)'와 ② 실제 강의실 실행 절차가 담긴 '수업 운영 전략(How)'이 구체적으로 드러나야 합니다.`;
 
-[서술 밀도 및 내용 보강 핵심 지침]
-1. 세부 근거(Why)와 수업 운영 전략(How)의 명시:
-   - 모든 표의 셀을 추상적 미사여구나 단순 키워드 나열로 채우지 말고, 반드시 ① 전공 이론·현장 수요 기반의 '설계 근거'와 ② 교수자·학생의 실제 강의실 실행 절차가 담긴 '구체적 수업 운영 전략'을 결합하여 개조식(~함, ~임, ~운영함)으로 서술하십시오.
-   - 분량은 표 레이아웃이 깨지지 않으면서도 심사위원이 즉시 실행 가능성을 확인할 수 있도록 항목당 2~3줄 내외의 알찬 밀도를 유지하십시오.
-2. 표별 핵심 보강 포인트:
-   - [표 Ⅰ-1, Ⅱ-1.2, Ⅱ-1.4]: 전공 교육의 구조적 한계 극복 논리와 5대 최소 요건(전공성·AI통합성·학생수행성·윤리성·평가가능성)별 수업 내 증빙·통제 장치를 구체적으로 서술하십시오.
-   - [표 Ⅱ-2.1, Ⅱ-2.2]: 1주차 사전 진단(Q1~Q4) 결과에 따른 수준별 비계(Scaffolding) 자료 제공 시점과 운영 전략, 교원 자가진단 점수가 낮은 취약 영역의 집중 보완 연수·컨설팅 실행 계획을 구체화하십시오.
-   - [표 Ⅱ-3.1, Ⅱ-3.2, Ⅱ-3.3]: 15주차 수업은 초반(기초 탐색)→중반(전공 데이터 분석 및 사실 검증)→후반(산출물 고도화 및 성찰)의 나선형 심화 전략이 드러나야 하며, 완결형 모듈 6대 요소(전공목표·AI목표·도구·활동절차·산출물·사용규칙)에는 차시별 [교수자 안내→학생 수행→AI 활용→인간 검증] 역할 분담과 무료 대체 도구·보안 조치를 명확히 기재하십시오.
-   - [표 Ⅱ-4.1 ~ Ⅳ-2]: 결과 검증(Fact-Check)과 인간 판단·수정 역량을 변별하는 평가 기준, 형성평가 피드백 통제 규칙(정답 대필 차단), 2027학년도 정규 개설 후 3단계 CQI 환류 전략 및 정량 성과지표(KPI) 연계 방안을 구체적으로 서술하십시오.
-3. 개수 및 정합성 엄수:
-   - weeklyPlans는 반드시 1주차부터 15주차까지 15개 항목을 모두 채우고, rubricLevels는 7개 평가영역 순서대로 정확히 7개 항목을 채우십시오.`;
-
-    const userPrompt = `다음 교수자 입력 정보를 바탕으로 각 표의 세부 근거와 구체적인 수업 운영 전략이 풍부하게 담긴 AI-X 연구결과 보고서 전체 데이터를 생성해 주세요.
-
+    const commonContext = `
 - 연구 구분: ${input.researchType === 'new' ? 'AI-X 교과목 신규 개발' : '기존 AI-X 교과목 인증'}
-- 전공 계열: ${input.academicField} (계열 지향점: ${fieldPreset.direction})
+- 전공 계열: ${input.academicField} (${fieldPreset.direction})
 - 소속 학부(과)/전공: ${input.department} ${input.major}
 - 교과목명(국문/영문): ${input.courseTitleKo} / ${input.courseTitleEn}
 - 개설 학년·학기 / 이수구분 / 학점-이론-실습: ${input.targetGradeSemester} / ${input.courseClassification} / ${input.credits}-${input.theoryHours}-${input.practiceHours}
@@ -329,42 +339,49 @@ export async function POST(req: NextRequest) {
 - 기존 전공 학습목표: ${input.existingMajorGoal}
 - 기존 수업의 한계점: ${input.existingCourseLimit}
 - AI 도입 핵심 아이디어: ${input.aiIntegrationIdea}
-- 교원 자가진단 영역별 점수 및 단계:
-  * ① AI 기초 이해: ${s1}점 (${calcStage(s1)})
-  * ② 전공-AI 융합 설계: ${s2}점 (${calcStage(s2)})
-  * ③ 수업 운영 및 학습자 지원: ${s3}점 (${calcStage(s3)})
-  * ④ AI 윤리 및 학문적 정직성: ${s4}점 (${calcStage(s4)})
-  * ⑤ 성찰과 지속적 계발: ${s5}점 (${calcStage(s5)})
-- 학생 비계(Scaffolding) 지원 메모: ${input.scaffoldingNote}
+- 교원 자가진단 영역별 점수: ①AI기초(${s1}, ${calcStage(s1)}), ②융합설계(${s2}, ${calcStage(s2)}), ③수업운영(${s3}, ${calcStage(s3)}), ④AI윤리(${s4}, ${calcStage(s4)}), ⑤성찰계발(${s5}, ${calcStage(s5)})
+- 학생 비계 지원 메모: ${input.scaffoldingNote}
 - 15주 수업 개요 메모: ${input.syllabusOutline}
-- 핵심 완결형 AI-X 모듈명 및 운영 주차: ${input.moduleName} (${input.moduleWeeks})
+- 핵심 완결형 AI-X 모듈: ${input.moduleName} (${input.moduleWeeks})
 - 최종 학생 산출물: ${input.finalDeliverable}
 - 활용 AI 도구: ${input.primaryTools}
 - 다차원 루브릭 배점(%): 전공문제이해(${input.rubricWeights[0]}), AI활용전략(${input.rubricWeights[1]}), 과정투명성(${input.rubricWeights[2]}), 결과검증(${input.rubricWeights[3]}), 인간판단·수정(${input.rubricWeights[4]}), AI윤리·보안(${input.rubricWeights[5]}), 최종산출물(${input.rubricWeights[6]})
-- AI 산출물 검증 기준: ${input.verificationStandard}
-- 형성평가 피드백 운영 방식: ${input.formativeFeedbackType === 'rag_kb' ? '2단계: 교과목 전용 RAG 지식베이스 기반 피드백' : '1단계: 수업자료·루브릭 프롬프트 첨부 LLM 피드백'}
-- 2027학년도 개설 학기 / 정원 / 실습환경: ${input.openSemester} / ${input.expectedCapacity} / ${input.classroomEnv}
-- 학과 선수과목 / 후속과목: ${input.prevCourseName || '기초 교양 AI 교과'} / ${input.nextCourseName || '전공 심화 캡스톤디자인 및 AX 마이크로디그리'}
+- 사실 검증 기준: ${input.verificationStandard}
+- 형성평가 방식: ${input.formativeFeedbackType === 'rag_kb' ? '2단계: 교과목 전용 RAG 지식베이스 피드백' : '1단계: 수업자료·루브릭 프롬프트 첨부 LLM 피드백'}
+- 2027학년도 개설 학기 / 정원 / 환경: ${input.openSemester} / ${input.expectedCapacity} / ${input.classroomEnv}
+- 선수과목 / 후속과목: ${input.prevCourseName || '기초 교양 AI 교과'} / ${input.nextCourseName || '전공 심화 캡스톤디자인 및 AX 마이크로디그리'}
 - 디지털 배지 키워드: ${input.badgeKeywords}`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: userPrompt,
-      config: {
-        systemInstruction,
-        responseMimeType: 'application/json',
-        responseSchema: reportResponseSchema,
-        maxOutputTokens: 28000,
-        temperature: 0.35,
-      },
-    });
+    // 전반부(Part 1)와 후반부(Part 2)를 동시에 병렬 생성하여 응답 시간을 절반 이하로 단축
+    const [resPart1, resPart2] = await Promise.all([
+      ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: `다음 교과목 정보를 바탕으로 보고서 전반부(연구 요약, Ⅰ장 배경·로드맵, Ⅱ-1장 연계·목표·5대요건, Ⅱ-2장 학생 비계 전략·교원 역량 계발 계획)를 생성하세요. 각 항목은 설계 근거와 운영 전략이 담긴 2~3줄 개조식으로 작성합니다.\n${commonContext}`,
+        config: {
+          systemInstruction,
+          responseMimeType: 'application/json',
+          responseSchema: part1Schema,
+          temperature: 0.35,
+        },
+      }),
+      ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: `다음 교과목 정보를 바탕으로 보고서 후반부(Ⅱ-3장 15주 전체 수업계획·완결형 모듈 6대 요소·도구 안전성, Ⅱ-4장 7대 루브릭·과정증빙 예시·형성평가 프롬프트, Ⅱ-5장 디지털 배지·2027 정규개설/CQI, Ⅳ장 결론·기대효과)를 생성하세요. weeklyPlans는 1~15주(15개), rubricLevels는 7개를 정확히 채우세요.\n${commonContext}`,
+        config: {
+          systemInstruction,
+          responseMimeType: 'application/json',
+          responseSchema: part2Schema,
+          temperature: 0.35,
+        },
+      }),
+    ]);
 
-    const rawText = response.text;
-    if (!rawText) {
-      throw new Error('AI 응답이 비어 있습니다.');
+    if (!resPart1.text || !resPart2.text) {
+      throw new Error('AI 응답 생성이 불완전합니다. 다시 시도해 주세요.');
     }
 
-    const generated = safeParseJson(rawText);
+    const p1 = safeParseJson(resPart1.text);
+    const p2 = safeParseJson(resPart2.text);
 
     const finalReport: AiXReportData = {
       researchType: input.researchType,
@@ -381,59 +398,59 @@ export async function POST(req: NextRequest) {
       theoryHours: input.theoryHours,
       practiceHours: input.practiceHours,
 
-      executiveSummary: generated.executiveSummary || [],
-      table1_1: generated.table1_1,
-      roadmapRows: generated.roadmapRows || [],
+      executiveSummary: p1.executiveSummary || [],
+      table1_1: p1.table1_1,
+      roadmapRows: p1.roadmapRows || [],
 
       selectedCourseTypes: input.selectedCourseTypes,
-      typeDiagnosisRationale: generated.typeDiagnosisRationale || [],
+      typeDiagnosisRationale: p1.typeDiagnosisRationale || [],
       targetCompetencyLevel: input.targetCompetencyLevel,
-      table2_1_2: generated.table2_1_2,
-      table2_1_3: generated.table2_1_3,
-      table2_1_4_requirements: generated.table2_1_4_requirements,
+      table2_1_2: p1.table2_1_2,
+      table2_1_3: p1.table2_1_3,
+      table2_1_4_requirements: p1.table2_1_4_requirements,
 
-      scaffoldingPlans: generated.scaffoldingPlans,
+      scaffoldingPlans: p1.scaffoldingPlans,
       facultyCompetency: {
-        area1: { score: s1, stage: calcStage(s1), plans: generated.facultyPlansByArea?.area1 || [] },
-        area2: { score: s2, stage: calcStage(s2), plans: generated.facultyPlansByArea?.area2 || [] },
-        area3: { score: s3, stage: calcStage(s3), plans: generated.facultyPlansByArea?.area3 || [] },
-        area4: { score: s4, stage: calcStage(s4), plans: generated.facultyPlansByArea?.area4 || [] },
-        area5: { score: s5, stage: calcStage(s5), plans: generated.facultyPlansByArea?.area5 || [] },
+        area1: { score: s1, stage: calcStage(s1), plans: p1.facultyPlansByArea?.area1 || [] },
+        area2: { score: s2, stage: calcStage(s2), plans: p1.facultyPlansByArea?.area2 || [] },
+        area3: { score: s3, stage: calcStage(s3), plans: p1.facultyPlansByArea?.area3 || [] },
+        area4: { score: s4, stage: calcStage(s4), plans: p1.facultyPlansByArea?.area4 || [] },
+        area5: { score: s5, stage: calcStage(s5), plans: p1.facultyPlansByArea?.area5 || [] },
         overallScore,
         overallStage,
-        overallPlan: generated.facultyPlansByArea?.overallPlan || '',
+        overallPlan: p1.facultyPlansByArea?.overallPlan || '',
       },
 
-      weeklyPlans: generated.weeklyPlans || [],
+      weeklyPlans: p2.weeklyPlans || [],
       moduleDesign: {
         moduleName: input.moduleName,
         moduleScheduleNote: input.moduleWeeks,
-        ...generated.moduleDesign,
+        ...p2.moduleDesign,
       },
-      aiToolSafetyRows: generated.aiToolSafetyRows || [],
+      aiToolSafetyRows: p2.aiToolSafetyRows || [],
 
       rubricRows: DEFAULT_RUBRIC_WEIGHTS.map((base, idx) => ({
         area: base.area,
         weight: input.rubricWeights[idx] ?? base.weight,
-        level4: generated.rubricLevels?.[idx]?.level4 || '',
-        level3: generated.rubricLevels?.[idx]?.level3 || '',
-        level2: generated.rubricLevels?.[idx]?.level2 || '',
-        level1: generated.rubricLevels?.[idx]?.level1 || '',
+        level4: p2.rubricLevels?.[idx]?.level4 || '',
+        level3: p2.rubricLevels?.[idx]?.level3 || '',
+        level2: p2.rubricLevels?.[idx]?.level2 || '',
+        level1: p2.rubricLevels?.[idx]?.level1 || '',
       })),
-      evidenceFormExample: generated.evidenceFormExample,
-      formativePrompts: generated.formativePrompts,
+      evidenceFormExample: p2.evidenceFormExample,
+      formativePrompts: p2.formativePrompts,
 
-      digitalBadge: generated.digitalBadge,
-      openingPlan2027: generated.openingPlan2027,
+      digitalBadge: p2.digitalBadge,
+      openingPlan2027: p2.openingPlan2027,
 
       conclusionSummary: {
-        moduleSummary: generated.conclusionSummary?.moduleSummary || [
+        moduleSummary: p2.conclusionSummary?.moduleSummary || [
           `${input.moduleName} (${input.moduleWeeks})`,
         ],
         humanAccountabilityWeight: humanAccWeight,
         finalProductWeight: finalProdWeight,
       },
-      expectedEffects: generated.expectedEffects,
+      expectedEffects: p2.expectedEffects,
       trainingRecords: input.trainingRecords || [],
     };
 
