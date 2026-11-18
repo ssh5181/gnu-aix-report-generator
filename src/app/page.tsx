@@ -77,7 +77,10 @@ export default function AiXReportGeneratorPage() {
       const res = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ input, passcode }),
+        body: JSON.stringify({ 
+            input,
+            passcode: passcode || sessionStorage.getItem('gnu_aix_verified_passcode') || passcodeInput.trim(),
+      }),
       });
       const rawBody = await res.text();
       let data;
@@ -137,7 +140,10 @@ export default function AiXReportGeneratorPage() {
       const res = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ input, passcode }),
+        body: JSON.stringify({ 
+input,
+  passcode: passcode || sessionStorage.getItem('gnu_aix_verified_passcode') || passcodeInput.trim(),
+}),
       });
       const data = await res.json();
       if (res.status === 401) {
