@@ -292,7 +292,7 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json();
 
-    const expectedPasscode = process.env.ACCESS_PASSCODE || '7724877';
+    const expectedPasscode = process.env.ACCESS_PASSCODE || '4877';
     if (!body.passcode || String(body.passcode).trim() !== expectedPasscode.trim()) {
       return NextResponse.json(
         { error: '유효하지 않은 참여 코드입니다. 다시 로그인해 주세요.' },
