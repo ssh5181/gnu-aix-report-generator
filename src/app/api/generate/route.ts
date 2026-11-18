@@ -291,14 +291,15 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const inputCode = String(body.passcode || '').trim();
+    const rawCode = body.passcode ?? body.password ?? body.code ?? body.accessCode ?? '';
+    const inputCode = String(rawCode).trim();
 
-    if (String(body.passcode || '').trim() !== '4877') {
-  return NextResponse.json(
-    { error: '유효하지 않은 참여 코드입니다. 다시 로그인해 주세요.' },
-    { status: 401 }
-     );
-   }
+    if (inputCode !== '4877') {
+      return NextResponse.json(
+        { error: `유효하지 않은 참여 코드입니다. (수신된 키: ${Object.keys(body).join(', ')})` },
+        { status: 401 }
+      );
+    }
 
     const input: WizardFormInput = body.input;
     if (!input || !input.courseTitleKo) {
