@@ -100,6 +100,12 @@ const handleUnlock = async (e: React.FormEvent) => {
     }
   };
 
+  const handleLockOut = () => {
+    sessionStorage.removeItem(STORAGE_KEY);
+    setPasscode('');
+    setPasscodeInput('');
+    setIsUnlocked(false);
+  };
   const preset = FIELD_PRESETS[input.academicField];
   const totalWeight = input.rubricWeights.reduce((a, b) => a + b, 0);
   const humanAccountabilityRatio = (input.rubricWeights[3] || 0) + (input.rubricWeights[4] || 0);
