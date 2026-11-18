@@ -190,7 +190,7 @@ input,
             <KeyRound className="h-6 w-6" />
           </div>
           <h1 className="mt-4 text-center text-xl font-bold text-slate-900">
-            경상국립대학교 AI-X 결과보고서 생성기
+            경상국립대학교 AI-X 설계 가이드
           </h1>
           <p className="mt-1.5 text-center text-xs leading-relaxed text-slate-500">
             2026학년도 국립대학육성사업 참여 교원 전용 시스템입니다.
@@ -234,7 +234,7 @@ input,
           </form>
 
           <p className="mt-6 border-t border-slate-100 pt-4 text-center text-[11px] text-slate-400">
-            문의: 경상국립대학교 교육혁신처 교육과정과
+            문의: GNU 교육혁신처 교육과정과(4877)
           </p>
         </div>
       </div>
