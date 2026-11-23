@@ -6,6 +6,7 @@ import {
   FIELD_PRESETS,
   WizardFormInput,
 } from '@/constants/axisPresets';
+import { checkPasscode } from '@/lib/passcode';
 
 export const maxDuration = 300;
 
@@ -13,6 +14,18 @@ function calcStage(avg: number): FacultyStage {
   if (avg < 2.5) return 'Acquire';
   if (avg < 4.0) return 'Deepen';
   return 'Create';
+}
+
+function currentSubmissionMonth(): string {
+  // 한국 시간 기준 제출 연월 (예: '2026년 11월')
+  const parts = new Intl.DateTimeFormat('ko-KR', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric',
+    month: 'numeric',
+  }).formatToParts(new Date());
+  const y = parts.find((p) => p.type === 'year')?.value;
+  const m = parts.find((p) => p.type === 'month')?.value;
+  return `${y}년 ${m}월`;
 }
 
 function avgOf(nums: number[]): number {
@@ -291,14 +304,9 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const rawCode = body.passcode ?? body.password ?? body.code ?? body.accessCode ?? '';
-    const inputCode = String(rawCode).trim();
-
-    if (inputCode !== '4877') {
-      return NextResponse.json(
-        { error: `유효하지 않은 참여 코드입니다. (수신된 키: ${Object.keys(body).join(', ')})` },
-        { status: 401 }
-      );
+    const check = checkPasscode(body ?? {});
+    if (!check.ok) {
+      return NextResponse.json({ error: check.error }, { status: check.status });
     }
 
     const input: WizardFormInput = body.input;
@@ -316,8 +324,10 @@ export async function POST(req: NextRequest) {
     const overallStage = calcStage(overallScore);
 
     const fieldPreset = FIELD_PRESETS[input.academicField];
-    const humanAccWeight = (input.rubricWeights[3] || 20) + (input.rubricWeights[4] || 20);
-    const finalProdWeight = input.rubricWeights[6] || 10;
+    // 과정 투명성 + 결과 검증 + 인간 판단 (Ⅳ-1 '과정/검증/인간판단 배점'과 일치)
+    const w = (idx: number) => input.rubricWeights[idx] ?? DEFAULT_RUBRIC_WEIGHTS[idx].weight;
+    const humanAccWeight = w(2) + w(3) + w(4);
+    const finalProdWeight = w(6);
 
     const ai = new GoogleGenAI({
       apiKey,
@@ -374,7 +384,7 @@ export async function POST(req: NextRequest) {
           responseMimeType: 'application/json',
           responseSchema: part2Schema,
           temperature: 0.35,
-	  thinkingConfig: { thinkingBudget: 0 },
+          thinkingConfig: { thinkingBudget: 0 },
         },
       }),
     ]);
@@ -394,7 +404,7 @@ export async function POST(req: NextRequest) {
       courseTitleEn: input.courseTitleEn,
       projectTitle: `${input.courseTitleKo} AI-X 교과목 개발 및 인증 연구`,
       professorName: input.professorName,
-      submissionMonth: '2026년 11월',
+      submissionMonth: currentSubmissionMonth(),
       targetGradeSemester: input.targetGradeSemester,
       courseClassification: input.courseClassification,
       credits: input.credits,
