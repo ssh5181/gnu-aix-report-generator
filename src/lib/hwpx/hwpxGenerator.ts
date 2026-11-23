@@ -598,6 +598,14 @@ function populateChapter2(doc: Document, data: AiXReportData) {
       (t.textContent || '').includes('과정 및 검증 보고서(학생 제출용)')
     );
   if (t2_4_2) {
+    // 1행 1열 표라 '나누지 않음'(NONE)·'쪽 영역 안으로 제한'(flowWithText=1)이면 쪽 끝에서 잘림.
+    // 셀 안에서도 쪽을 넘겨 나뉘도록 '나눔'(TABLE)으로 바꾸고 쪽 영역 제한을 해제함.
+    // (sanitizeTemplate의 TABLE→CELL 변환 이후에 적용해야 하므로 여기서 설정)
+    t2_4_2.setAttribute('pageBreak', 'TABLE');
+    const pos = Array.from(t2_4_2.children).find((el) => el.localName === 'pos');
+    if (pos) pos.setAttribute('flowWithText', '0');
+    clearLineSegArrays(t2_4_2);
+
     const ex = data.evidenceFormExample;
     // 과제명 예시
     for (const t of Array.from(t2_4_2.getElementsByTagNameNS(HP_NS, 't'))) {
