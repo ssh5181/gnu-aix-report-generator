@@ -90,7 +90,13 @@ function sanitizeTemplate(doc: Document, removeGuidePage: boolean) {
   for (const tbl of allTables) {
     const firstTc = tbl.getElementsByTagNameNS(HP_NS, 'tc')[0];
     // 1) 모든 【작성 개요 및 목적】, 【작성방법】 안내 박스(borderFillIDRef="22") 제거
-    if (firstTc && firstTc.getAttribute('borderFillIDRef') === '22') {
+    //    [표 Ⅱ-4.2] 학생 제출용 서식처럼 같은 테두리 스타일을 쓰는 실제 서식 표는 보존하기 위해
+    //    '【'로 시작하는 안내 박스만 삭제함
+    if (
+      firstTc &&
+      firstTc.getAttribute('borderFillIDRef') === '22' &&
+      (tbl.textContent || '').trim().startsWith('【')
+    ) {
       const parentPara = findAncestor(tbl, 'p');
       if (parentPara && parentPara.parentNode) {
         parentPara.parentNode.removeChild(parentPara);
@@ -129,7 +135,14 @@ function sanitizeTemplate(doc: Document, removeGuidePage: boolean) {
     }
   }
 
-  // 4) 모든 표 제목(<hp:caption>)에서 '(예시)' 텍스트 run 제거
+  // 4) 캡션 밖 별도 문단으로 놓인 '(예시)' 라벨 run 제거 (예: [표 Ⅱ-4.2] 제목 옆)
+  for (const run of Array.from(doc.getElementsByTagNameNS(HP_NS, 'run'))) {
+    if ((run.textContent || '').trim() === '(예시)') {
+      run.parentNode?.removeChild(run);
+    }
+  }
+
+  // 5) 모든 표 제목(<hp:caption>)에서 '(예시)' 텍스트 run 제거
   const captions = Array.from(doc.getElementsByTagNameNS(HP_NS, 'caption'));
   for (const cap of captions) {
     const runs = Array.from(cap.getElementsByTagNameNS(HP_NS, 'run'));
@@ -200,18 +213,30 @@ function populateCoverAndMeta(doc: Document, data: AiXReportData) {
     allRects.find((r) => r.getAttribute('id') === '1153757509') ||
     allRects.find((r) => (r.textContent || '').includes('연 구 과 제 명'));
   if (submitRect) {
-    const runs = Array.from(submitRect.getElementsByTagNameNS(HP_NS, 'run'));
-    for (const run of runs) {
-      const txt = run.textContent || '';
-      if (txt.includes('연 구 과 제 명')) {
-        setRunText(run, data.projectTitle || `${data.courseTitleKo} AI-X 교과목 개발 및 인증 연구`);
-      } else if (txt.includes('20 년 월')) {
-        setRunText(run, data.submissionMonth);
-      } else if (txt.includes('〇 〇 〇')) {
-        setRunText(run, data.professorName);
+    // run 안에 표(연구책임자 칸)가 중첩되어 있으므로 run이 아닌 <hp:t> 단위로 정확히 치환함
+    const texts = Array.from(submitRect.getElementsByTagNameNS(HP_NS, 't'));
+    for (const t of texts) {
+      const txt = (t.textContent || '').trim();
+      if (txt === '연 구 과 제 명') {
+        setTText(t, data.projectTitle || `${data.courseTitleKo} AI-X 교과목 개발 및 인증 연구`);
+      } else if (/^20\s*년\s*월$/.test(txt)) {
+        setTText(t, data.submissionMonth);
+      } else if (txt === '〇 〇 〇') {
+        setTText(t, data.professorName);
       }
     }
     clearLineSegArrays(submitRect);
+  }
+
+  // 부록 2 자문의견서 수신처 '○○학과장' 치환
+  const deptName = data.department.trim();
+  if (deptName) {
+    for (const t of Array.from(doc.getElementsByTagNameNS(HP_NS, 't'))) {
+      const txt = t.textContent || '';
+      if (txt.includes('○○학과장')) {
+        setTText(t, txt.replace('○○학과장', `${deptName}장`));
+      }
+    }
   }
 
   // 목차 및 Ⅱ장 대제목의 '과목명가칭' 치환 + 목차 점선(tab) 너비 자동 보정
@@ -566,17 +591,33 @@ function populateChapter2(doc: Document, data: AiXReportData) {
     });
   }
 
-  const t2_4_2 = findTableByCaption(doc, 'Ⅱ-4.2');
+  // [표 Ⅱ-4.2] 학생 제출용 서식: 제목이 표 캡션이 아닌 별도 문단이므로 표 ID 또는 본문 문구로 찾음
+  const t2_4_2 =
+    findTableById(doc, '1178815098') ||
+    Array.from(doc.getElementsByTagNameNS(HP_NS, 'tbl')).find((t) =>
+      (t.textContent || '').includes('과정 및 검증 보고서(학생 제출용)')
+    );
   if (t2_4_2) {
-    const nestedTables = Array.from(t2_4_2.getElementsByTagNameNS(HP_NS, 'tbl'));
-    if (nestedTables[1]) {
-      const vRows = getDirectRows(nestedTables[1]);
+    const ex = data.evidenceFormExample;
+    // 과제명 예시
+    for (const t of Array.from(t2_4_2.getElementsByTagNameNS(HP_NS, 't'))) {
+      if ((t.textContent || '').trim() === '☐ 과제명:' && ex.taskExampleTitle) {
+        setTText(t, `☐ 과제명: ${ex.taskExampleTitle}`);
+        break;
+      }
+    }
+    // 결과 검증표(Fact-checking Table) 예시 행
+    const verifyTbl = Array.from(t2_4_2.getElementsByTagNameNS(HP_NS, 'tbl')).find((t) =>
+      (t.textContent || '').includes('확인 근거')
+    );
+    if (verifyTbl) {
+      const vRows = getDirectRows(verifyTbl);
       if (vRows[1]) {
         const cells = getRowCells(vRows[1]);
-        setCellLines(doc, cells[0], [data.evidenceFormExample.aiClaimExample], '31', '24');
-        setCellLines(doc, cells[1], [data.evidenceFormExample.verificationResultExample], '31', '24');
-        setCellLines(doc, cells[2], [data.evidenceFormExample.evidenceSourceExample], '31', '24');
-        setCellLines(doc, cells[3], [data.evidenceFormExample.actionExample], '31', '24');
+        setCellLines(doc, cells[0], [ex.aiClaimExample], '31', '24');
+        setCellLines(doc, cells[1], [ex.verificationResultExample], '31', '24');
+        setCellLines(doc, cells[2], [ex.evidenceSourceExample], '31', '24');
+        setCellLines(doc, cells[3], [ex.actionExample], '31', '24');
       }
     }
   }
@@ -862,6 +903,11 @@ function setRunText(run: Element, text: string) {
     clearElementChildren(existingT);
     existingT.appendChild(run.ownerDocument!.createTextNode(text));
   }
+}
+
+function setTText(t: Element, text: string) {
+  clearElementChildren(t);
+  t.appendChild(t.ownerDocument!.createTextNode(text));
 }
 
 function clearLineSegArrays(root: Element) {

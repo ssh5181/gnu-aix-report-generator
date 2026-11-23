@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useState, useSyncExternalStore } from 'react';
 import {
   BookOpen,
   CheckCircle2,
@@ -42,12 +42,27 @@ const STEPS = [
 ];
 
 const STORAGE_KEY = 'gnu_aix_verified_passcode';
+const STORAGE_EVENT = 'gnu-aix-passcode-change';
+
+// sessionStorage에 저장된 인증 코드를 React 상태와 동기화 (SSR 시에는 null)
+function subscribePasscode(onChange: () => void) {
+  window.addEventListener(STORAGE_EVENT, onChange);
+  return () => window.removeEventListener(STORAGE_EVENT, onChange);
+}
+function readStoredPasscode() {
+  return sessionStorage.getItem(STORAGE_KEY);
+}
+function writeStoredPasscode(value: string | null) {
+  if (value) sessionStorage.setItem(STORAGE_KEY, value);
+  else sessionStorage.removeItem(STORAGE_KEY);
+  window.dispatchEvent(new Event(STORAGE_EVENT));
+}
 
 export default function AiXReportGeneratorPage() {
   // 인증 상태 관리
-  const [passcode, setPasscode] = useState<string>('');
+  const passcode = useSyncExternalStore(subscribePasscode, readStoredPasscode, () => null) ?? '';
+  const isUnlocked = passcode !== '';
   const [passcodeInput, setPasscodeInput] = useState<string>('');
-  const [isUnlocked, setIsUnlocked] = useState<boolean>(false);
   const [isCheckingAuth, setIsCheckingAuth] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
@@ -58,18 +73,11 @@ export default function AiXReportGeneratorPage() {
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [report, setReport] = useState<AiXReportData | null>(null);
+  // 새 초안이 생성될 때마다 증가시켜 결과 화면의 자유 입력칸을 초기화함
+  const [reportVersion, setReportVersion] = useState<number>(0);
   const [removeGuidePage, setRemoveGuidePage] = useState<boolean>(true);
 
-  // 기존 세션 인증 확인
-  useEffect(() => {
-    const saved = sessionStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      setPasscode(saved);
-      setIsUnlocked(true);
-    }
-  }, []);
-
-const handleUnlock = async (e: React.FormEvent) => {
+  const handleUnlock = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
     setIsCheckingAuth(true);
@@ -90,9 +98,7 @@ const handleUnlock = async (e: React.FormEvent) => {
       if (!res.ok) {
         throw new Error(data.error || '입장 코드 확인에 실패했습니다.');
       }
-      sessionStorage.setItem(STORAGE_KEY, trimmed);
-      setPasscode(trimmed);
-      setIsUnlocked(true);
+      writeStoredPasscode(trimmed);
     } catch (err: unknown) {
       setAuthError(err instanceof Error ? err.message : '인증 오류가 발생했습니다.');
     } finally {
@@ -101,10 +107,8 @@ const handleUnlock = async (e: React.FormEvent) => {
   };
 
   const handleLockOut = () => {
-    sessionStorage.removeItem(STORAGE_KEY);
-    setPasscode('');
+    writeStoredPasscode(null);
     setPasscodeInput('');
-    setIsUnlocked(false);
   };
   const preset = FIELD_PRESETS[input.academicField];
   const totalWeight = input.rubricWeights.reduce((a, b) => a + b, 0);
@@ -136,10 +140,7 @@ const handleUnlock = async (e: React.FormEvent) => {
       const res = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-input,
-  passcode: passcode || sessionStorage.getItem('gnu_aix_verified_passcode') || passcodeInput.trim(),
-}),
+        body: JSON.stringify({ input, passcode }),
       });
       const data = await res.json();
       if (res.status === 401) {
@@ -150,6 +151,7 @@ input,
         throw new Error(data.error || 'AI 보고서 생성에 실패했습니다.');
       }
       setReport(data.report);
+      setReportVersion((v) => v + 1);
     } catch (e: unknown) {
       setErrorMsg(e instanceof Error ? e.message : '알 수 없는 오류가 발생했습니다.');
     } finally {
@@ -350,9 +352,10 @@ input,
                   <span>연구 요약 (4쪽 수록 내용 - 직접 수정 가능)</span>
                 </h3>
                 <textarea
+                  key={`summary-${reportVersion}`}
                   rows={6}
-                  value={report.executiveSummary.join('\n\n')}
-                  onChange={(e) =>
+                  defaultValue={report.executiveSummary.join('\n\n')}
+                  onBlur={(e) =>
                     setReport({
                       ...report,
                       executiveSummary: e.target.value
@@ -501,9 +504,10 @@ input,
                       직무·기술 키워드
                     </label>
                     <input
+                      key={`keywords-${reportVersion}`}
                       type="text"
-                      value={report.digitalBadge.keywords.join(' ')}
-                      onChange={(e) =>
+                      defaultValue={report.digitalBadge.keywords.join(' ')}
+                      onBlur={(e) =>
                         setReport({
                           ...report,
                           digitalBadge: {
