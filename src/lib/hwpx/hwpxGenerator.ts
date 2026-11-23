@@ -599,9 +599,9 @@ function populateChapter2(doc: Document, data: AiXReportData) {
     );
   if (t2_4_2) {
     // 1행 1열 표라 '나누지 않음'(NONE)·'쪽 영역 안으로 제한'(flowWithText=1)이면 쪽 끝에서 잘림.
-    // 셀 안에서도 쪽을 넘겨 나뉘도록 '나눔'(TABLE)으로 바꾸고 쪽 영역 제한을 해제함.
-    // (sanitizeTemplate의 TABLE→CELL 변환 이후에 적용해야 하므로 여기서 설정)
-    t2_4_2.setAttribute('pageBreak', 'TABLE');
+    // OWPML pageBreak: TABLE=표는 나뉘되 셀은 안 나뉨, CELL=셀 안의 내용도 나뉨, NONE=안 나뉨.
+    // 셀이 하나뿐이므로 셀 내용이 다음 쪽으로 이어지도록 CELL로 설정하고 쪽 영역 제한을 해제함.
+    t2_4_2.setAttribute('pageBreak', 'CELL');
     const pos = Array.from(t2_4_2.children).find((el) => el.localName === 'pos');
     if (pos) pos.setAttribute('flowWithText', '0');
     clearLineSegArrays(t2_4_2);
