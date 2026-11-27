@@ -1,5 +1,5 @@
 import JSZip from 'jszip';
-import { AiXReportData } from '@/types/report';
+import { AiXReportData, ModuleDesign } from '@/types/report';
 
 const HP_NS = 'http://www.hancom.co.kr/hwpml/2011/paragraph';
 
@@ -542,24 +542,30 @@ function populateChapter2(doc: Document, data: AiXReportData) {
 
   const t2_3_2 = findTableByCaption(doc, 'Ⅱ-3.2');
   if (t2_3_2) {
-    const rows = getDirectRows(t2_3_2);
-    if (rows[1]) {
-      setCellLines(doc, getRowCells(rows[1])[1], [data.moduleDesign.moduleName], '61', '24');
-      setCellLines(doc, getRowCells(rows[1])[2], [data.moduleDesign.moduleScheduleNote], '31', '24');
+    const extraModules = data.additionalModuleDesigns ?? [];
+    // 추가 모듈이 있으면 [표 Ⅱ-3.2]를 모듈 수만큼 복제해 대표 모듈 표 바로 뒤에 이어 붙임
+    // (값을 채우기 전에 복제해야 원본 서식이 그대로 복사됨)
+    const tables: Element[] = [t2_3_2];
+    const anchorPara = findAncestor(t2_3_2, 'p');
+    if (extraModules.length > 0 && anchorPara?.parentNode) {
+      let insertAfter: Element = anchorPara;
+      extraModules.forEach((_, i) => {
+        const clonedPara = anchorPara.cloneNode(true) as Element;
+        const clonedTbl = clonedPara.getElementsByTagNameNS(HP_NS, 'tbl')[0];
+        if (!clonedTbl) return;
+        // 표 ID 중복을 피하기 위해 새 ID 부여
+        const baseId = Number(t2_3_2.getAttribute('id')) || 1178815081;
+        clonedTbl.setAttribute('id', String(baseId + 1000 + i));
+        anchorPara.parentNode!.insertBefore(clonedPara, insertAfter.nextSibling);
+        insertAfter = clonedPara;
+        tables.push(clonedTbl);
+      });
+      // 표 제목에 모듈 번호 표기
+      tables.forEach((tbl, i) => appendCaptionText(tbl, ` (모듈 ${i + 1})`));
     }
-    const modFields = [
-      data.moduleDesign.majorGoal,
-      data.moduleDesign.aiGoal,
-      data.moduleDesign.tools,
-      data.moduleDesign.procedures,
-      data.moduleDesign.deliverables,
-      data.moduleDesign.usageRules,
-    ];
-    modFields.forEach((lines, idx) => {
-      if (rows[idx + 2]) {
-        setCellLines(doc, getRowCells(rows[idx + 2])[1], lines, '61', '24');
-      }
-    });
+
+    const designs = [data.moduleDesign, ...extraModules];
+    tables.forEach((tbl, i) => fillModuleDesignTable(doc, tbl, designs[i]));
   }
 
   const t2_3_3 = findTableByCaption(doc, 'Ⅱ-3.3');
@@ -776,6 +782,35 @@ function fillDigitalBadgeTable(
   if (rows[2]) setCellLines(doc, getRowCells(rows[2])[1], [badge.badgeDescription], '61', '24');
   if (rows[3]) setCellLines(doc, getRowCells(rows[3])[1], badge.acquisitionCriteria, '61', '24');
   if (rows[4]) setCellLines(doc, getRowCells(rows[4])[1], [badge.keywords.join(' ')], '61', '24');
+}
+
+function fillModuleDesignTable(doc: Document, tbl: Element, design: ModuleDesign) {
+  const rows = getDirectRows(tbl);
+  if (rows[1]) {
+    setCellLines(doc, getRowCells(rows[1])[1], [design.moduleName], '61', '24');
+    setCellLines(doc, getRowCells(rows[1])[2], [design.moduleScheduleNote], '31', '24');
+  }
+  const modFields = [
+    design.majorGoal,
+    design.aiGoal,
+    design.tools,
+    design.procedures,
+    design.deliverables,
+    design.usageRules,
+  ];
+  modFields.forEach((lines, idx) => {
+    if (rows[idx + 2]) {
+      setCellLines(doc, getRowCells(rows[idx + 2])[1], lines ?? [], '61', '24');
+    }
+  });
+}
+
+function appendCaptionText(tbl: Element, suffix: string) {
+  const cap = Array.from(tbl.children).find((el) => el.localName === 'caption');
+  if (!cap) return;
+  const texts = Array.from(cap.getElementsByTagNameNS(HP_NS, 't'));
+  const last = texts[texts.length - 1];
+  if (last) setTText(last, `${(last.textContent || '').replace(/\s+$/, '')}${suffix}`);
 }
 
 function findTableById(doc: Document, id: string): Element | undefined {

@@ -52,6 +52,17 @@ export interface TrainingRecordRow {
   participant: string;
 }
 
+export interface ModuleDesign {
+  moduleName: string;                    // 예: '모듈 ① 정책 문서 빅데이터 분석 및 AI 결과 검증'
+  moduleScheduleNote: string;            // 예: '5~6주차 운영 (총 6시간)'
+  majorGoal: string[];                   // ① 전공목표
+  aiGoal: string[];                      // ② AI활용목표
+  tools: string[];                       // ③ 도구 (주 도구 + 무료 대체 도구)
+  procedures: string[];                  // ④ 활동절차 (차시별)
+  deliverables: string[];                // ⑤ 산출물
+  usageRules: string[];                  // ⑥ 사용규칙
+}
+
 export interface AiXReportData {
   // 1. 기본 메타정보 (표지, 제출문, 목차, Ⅱ-1.1 동기화)
   researchType: 'new' | 'cert';          // 신규 개발 vs 기존 인증
@@ -127,16 +138,8 @@ export interface AiXReportData {
 
   // 6. Ⅱ-3장: 완결형 AI-X 모듈 및 주차별 수업 설계
   weeklyPlans: WeeklyPlanRow[];          // 15주 전체
-  moduleDesign: {
-    moduleName: string;                  // 예: '모듈 ① 정책 문서 빅데이터 분석 및 AI 결과 검증'
-    moduleScheduleNote: string;          // 예: '5~6주차 운영 (총 6시간)'
-    majorGoal: string[];                 // ① 전공목표
-    aiGoal: string[];                    // ② AI활용목표
-    tools: string[];                     // ③ 도구 (주 도구 + 무료 대체 도구)
-    procedures: string[];                // ④ 활동절차 (차시별)
-    deliverables: string[];              // ⑤ 산출물
-    usageRules: string[];                // ⑥ 사용규칙
-  };
+  moduleDesign: ModuleDesign;           // [표 Ⅱ-3.2] 대표 모듈
+  additionalModuleDesigns?: ModuleDesign[]; // 추가 모듈 ([표 Ⅱ-3.2]를 복제해 이어서 수록)
   aiToolSafetyRows: AiToolSafetyRow[];   // [표 Ⅱ-3.3]
 
   // 7. Ⅱ-4장: 지능형 다차원 평가 및 피드백 체계

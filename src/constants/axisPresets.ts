@@ -1,5 +1,20 @@
 import { AiXCourseType, CompetencyLevel, RubricCriterionRow, TrainingRecordRow } from '@/types/report';
 
+// Step 4 추가 모듈 입력 (대표 모듈과 동일한 4개 항목)
+export interface ModuleInput {
+  moduleName: string;
+  moduleWeeks: string;
+  finalDeliverable: string;
+  primaryTools: string;
+}
+
+export const EMPTY_MODULE_INPUT: ModuleInput = {
+  moduleName: '',
+  moduleWeeks: '',
+  finalDeliverable: '',
+  primaryTools: '',
+};
+
 export type AcademicField = '인문사회' | '자연과학' | '공학' | '예체능' | '교육·융합';
 
 export interface FieldPreset {
@@ -166,6 +181,7 @@ export interface WizardFormInput {
   moduleWeeks: string;
   finalDeliverable: string;
   primaryTools: string;
+  additionalModules: ModuleInput[]; // 대표 모듈 외 추가 모듈 (0개 이상)
 
   // Step 5
   rubricWeights: number[]; // 길이 7 (합계 100)
@@ -223,6 +239,7 @@ export const SAMPLE_WIZARD_INPUT: WizardFormInput = {
   moduleWeeks: '5~6주차 운영 (총 6시간)',
   finalDeliverable: 'AI 기반 지역 공공정책 분석 보고서 (핵심 프롬프트 로그 2개 및 사실 검증표 포함)',
   primaryTools: 'ChatGPT, Claude (무료 대체: Google Gemini, Voyant Tools)',
+  additionalModules: [],
 
   rubricWeights: [15, 15, 10, 20, 20, 10, 10],
   verificationStandard: '보건복지부·행정안전부 공식 결산 통계, 국가통계포털(KOSIS), 학술 논문 및 법령 원문',
