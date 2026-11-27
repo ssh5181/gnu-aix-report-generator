@@ -1256,11 +1256,39 @@ export default function AiXReportGeneratorPage() {
                     </div>
                   </div>
 
+                  {totalWeight !== 100 && (
+                    <div
+                      role="alert"
+                      className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700"
+                    >
+                      ⚠ 전체 배점 합계가 {totalWeight}%입니다 (100%보다{' '}
+                      {totalWeight > 100 ? `${totalWeight - 100}% 많음` : `${100 - totalWeight}% 적음`}).
+                      합계가 100%가 되도록 배점을 조정해 주세요. 100%가 되어야 보고서를 생성할 수 있습니다.
+                    </div>
+                  )}
+
                   <div className="space-y-3">
-                    {DEFAULT_RUBRIC_WEIGHTS.map((item, idx) => (
-                      <div key={item.area} className="flex items-center gap-4">
-                        <span className="w-52 text-xs font-semibold text-slate-700">
+                    {DEFAULT_RUBRIC_WEIGHTS.map((item, idx) => {
+                      // 결과 검증(3)·인간 판단(4): 인간 책무성 권장 영역 강조
+                      const isKey = idx === 3 || idx === 4;
+                      return (
+                      <div
+                        key={item.area}
+                        className={`flex items-center gap-4 ${
+                          isKey ? '-mx-2 rounded-lg bg-blue-50 px-2 py-1.5 ring-1 ring-blue-200' : ''
+                        }`}
+                      >
+                        <span
+                          className={`w-52 text-xs ${
+                            isKey ? 'font-extrabold text-blue-800' : 'font-semibold text-slate-700'
+                          }`}
+                        >
                           {item.area}
+                          {isKey && (
+                            <span className="ml-1.5 inline-block rounded-full bg-blue-700 px-1.5 py-0.5 align-middle text-[10px] font-bold text-white">
+                              권장 핵심
+                            </span>
+                          )}
                         </span>
                         <input
                           type="range"
@@ -1275,11 +1303,16 @@ export default function AiXReportGeneratorPage() {
                           }}
                           className="h-2 flex-1 cursor-pointer accent-blue-700"
                         />
-                        <span className="w-12 text-right text-xs font-bold text-slate-900">
+                        <span
+                          className={`w-12 text-right text-xs font-bold ${
+                            isKey ? 'text-blue-800' : 'text-slate-900'
+                          }`}
+                        >
                           {input.rubricWeights[idx]}%
                         </span>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
 
                   <div>
@@ -1445,6 +1478,12 @@ export default function AiXReportGeneratorPage() {
                     <ChevronRight className="h-4 w-4" />
                   </button>
                 ) : (
+                  <div className="flex flex-col items-end gap-1.5">
+                  {totalWeight !== 100 && (
+                    <span className="text-xs font-semibold text-red-600">
+                      Step 5의 전체 배점 합계가 {totalWeight}%입니다. 100%로 조정해야 생성할 수 있습니다.
+                    </span>
+                  )}
                   <button
                     type="button"
                     onClick={handleGenerateReport}
@@ -1463,6 +1502,7 @@ export default function AiXReportGeneratorPage() {
                       </>
                     )}
                   </button>
+                  </div>
                 )}
               </div>
             </div>
