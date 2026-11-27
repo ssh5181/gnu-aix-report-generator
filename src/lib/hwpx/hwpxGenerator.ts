@@ -51,6 +51,7 @@ export async function generateAiXReportHwpx(
   populateChapter1(doc, data);
   populateChapter2(doc, data);
   populateChapter3AndAppendices(doc, data);
+  ensureSpacingAfterTables(doc);
 
   // 4. XML 직렬화 (OWPML 표준 XML 선언부 보존) 및 ZIP 재압축
   const serializer = new XMLSerializer();
@@ -560,8 +561,9 @@ function populateChapter2(doc: Document, data: AiXReportData) {
         insertAfter = clonedPara;
         tables.push(clonedTbl);
       });
-      // 표 제목에 모듈 번호 표기
-      tables.forEach((tbl, i) => appendCaptionText(tbl, ` (모듈 ${i + 1})`));
+      // 표 번호 중복을 피하기 위해 [표Ⅱ-3.2-1], [표Ⅱ-3.2-2]…처럼 하위 번호를 붙이고 모듈 번호를 표기
+      // (뒤따르는 [표Ⅱ-3.3] 이후 번호는 그대로 유지됨)
+      tables.forEach((tbl, i) => renumberModuleCaption(tbl, i + 1));
     }
 
     const designs = [data.moduleDesign, ...extraModules];
@@ -805,12 +807,36 @@ function fillModuleDesignTable(doc: Document, tbl: Element, design: ModuleDesign
   });
 }
 
-function appendCaptionText(tbl: Element, suffix: string) {
+function renumberModuleCaption(tbl: Element, moduleNo: number) {
   const cap = Array.from(tbl.children).find((el) => el.localName === 'caption');
   if (!cap) return;
   const texts = Array.from(cap.getElementsByTagNameNS(HP_NS, 't'));
-  const last = texts[texts.length - 1];
-  if (last) setTText(last, `${(last.textContent || '').replace(/\s+$/, '')}${suffix}`);
+  const titleT = texts.find((t) => /Ⅱ-3\.2\]/.test(t.textContent || ''));
+  if (!titleT) return;
+  const title = (titleT.textContent || '')
+    .replace(/Ⅱ-3\.2\]/, `Ⅱ-3.2-${moduleNo}]`)
+    .replace(/\s+$/, '');
+  setTText(titleT, `${title} (모듈 ${moduleNo})`);
+}
+
+/**
+ * 안내 박스를 지우면 표 바로 뒤에 다음 절 제목(예: '3.3. …')이 붙어 버리므로,
+ * 본문 최상위에서 '표를 담은 문단' 바로 다음이 절 제목이면 빈 문단을 하나 넣어 간격을 띄움.
+ */
+function ensureSpacingAfterTables(doc: Document) {
+  const sec = doc.documentElement;
+  const paras = Array.from(sec.children).filter((el) => el.localName === 'p');
+  const headingRe = /^\s*(\d+(\.\d+)*\.\s|[ⅠⅡⅢⅣⅤ]\.\s)/;
+  for (let i = 0; i < paras.length - 1; i++) {
+    const cur = paras[i];
+    const next = paras[i + 1];
+    if (cur.getElementsByTagNameNS(HP_NS, 'tbl').length === 0) continue;
+    if (next.getElementsByTagNameNS(HP_NS, 'tbl').length > 0) continue;
+    if (next.getAttribute('pageBreak') === '1') continue; // 새 쪽에서 시작하는 제목은 제외
+    if (!headingRe.test(next.textContent || '')) continue;
+    const spacer = createParagraph(doc, '', cur.getAttribute('paraPrIDRef') || '1', '52');
+    sec.insertBefore(spacer, next);
+  }
 }
 
 function findTableById(doc: Document, id: string): Element | undefined {
