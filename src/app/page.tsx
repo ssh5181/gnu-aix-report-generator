@@ -24,7 +24,9 @@ import {
 import {
   AcademicField,
   DEFAULT_RUBRIC_WEIGHTS,
+  EMPTY_MODULE_INPUT,
   FACULTY_DIAGNOSIS_QUESTIONS,
+  ModuleInput,
   FIELD_PRESETS,
   SAMPLE_WIZARD_INPUT,
   WizardFormInput,
@@ -1093,7 +1095,7 @@ export default function AiXReportGeneratorPage() {
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div>
                       <label className="mb-1 block text-xs font-bold text-slate-700">
-                        2) 대표 완결형 AI-X 모듈명
+                        2) 대표 완결형 AI-X 모듈명 (모듈 1)
                       </label>
                       <input
                         type="text"
@@ -1139,6 +1141,80 @@ export default function AiXReportGeneratorPage() {
                       />
                     </div>
                   </div>
+
+                  {input.additionalModules.map((mod, mIdx) => {
+                    const updateModule = (patch: Partial<ModuleInput>) =>
+                      setInput((prev) => ({
+                        ...prev,
+                        additionalModules: prev.additionalModules.map((m, i) =>
+                          i === mIdx ? { ...m, ...patch } : m
+                        ),
+                      }));
+                    const fields: { key: keyof ModuleInput; label: string; placeholder: string }[] = [
+                      { key: 'moduleName', label: '2) 추가 완결형 AI-X 모듈명', placeholder: '예: 모듈 ② AI 활용 정책 대안 시나리오 설계' },
+                      { key: 'moduleWeeks', label: '3) 집중 운영 주차 및 시수', placeholder: '예: 9~10주차 운영 (총 6시간)' },
+                      { key: 'finalDeliverable', label: '4) 학생 최종 제출 산출물 형태', placeholder: '예: 정책 대안 시나리오 보고서' },
+                      { key: 'primaryTools', label: '5) 주 활용 AI 도구 및 무료 대체 도구', placeholder: '예: ChatGPT (무료 대체: Google Gemini)' },
+                    ];
+                    return (
+                      <div
+                        key={mIdx}
+                        className="space-y-4 rounded-2xl border border-blue-200 bg-blue-50/40 p-4"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-bold text-blue-800">
+                            추가 모듈 {mIdx + 2}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setInput((prev) => ({
+                                ...prev,
+                                additionalModules: prev.additionalModules.filter((_, i) => i !== mIdx),
+                              }))
+                            }
+                            className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            <span>삭제</span>
+                          </button>
+                        </div>
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          {fields.map((f) => (
+                            <div key={f.key}>
+                              <label className="mb-1 block text-xs font-bold text-slate-700">
+                                {f.label}
+                              </label>
+                              <input
+                                type="text"
+                                placeholder={f.placeholder}
+                                value={mod[f.key]}
+                                onChange={(e) => updateModule({ [f.key]: e.target.value })}
+                                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setInput((prev) => ({
+                        ...prev,
+                        additionalModules: [...prev.additionalModules, { ...EMPTY_MODULE_INPUT }],
+                      }))
+                    }
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-blue-300 py-3 text-sm font-semibold text-blue-700 hover:bg-blue-50"
+                  >
+                    <Plus className="h-4 w-4" />
+                    <span>완결형 AI-X 모듈 추가</span>
+                  </button>
+                  <p className="-mt-3 text-[11px] text-slate-500">
+                    추가한 모듈마다 [표 Ⅱ-3.2] 모듈 상세 설계서가 한 장씩 더 만들어집니다. 모듈명을 비워 두면 제외됩니다.
+                  </p>
                 </div>
               )}
 

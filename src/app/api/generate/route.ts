@@ -160,6 +160,29 @@ const part1Schema: Schema = {
   ],
 };
 
+// 완결형 AI-X 모듈 6대 요소 (대표 모듈과 추가 모듈 공통)
+const moduleDesignSchema: Schema = {
+  type: Type.OBJECT,
+  properties: {
+    majorGoal: stringArraySchema,
+    aiGoal: stringArraySchema,
+    tools: stringArraySchema,
+    procedures: stringArraySchema,
+    deliverables: stringArraySchema,
+    usageRules: stringArraySchema,
+  },
+  required: ['majorGoal', 'aiGoal', 'tools', 'procedures', 'deliverables', 'usageRules'],
+};
+
+// 추가 모듈 스키마: 입력한 추가 모듈 순서대로 6대 요소를 생성
+const extraModulesSchema: Schema = {
+  type: Type.OBJECT,
+  properties: {
+    modules: { type: Type.ARRAY, items: moduleDesignSchema },
+  },
+  required: ['modules'],
+};
+
 /* ============================================================================
  * Part 2 스키마: Ⅱ-3장(15주·모듈·도구), Ⅱ-4장(루브릭·증빙·피드백), Ⅱ-5장 & Ⅳ장(배지·개설·결론)
  * ========================================================================== */
@@ -181,18 +204,7 @@ const part2Schema: Schema = {
         required: ['week', 'title', 'details', 'method', 'equipment', 'note'],
       },
     },
-    moduleDesign: {
-      type: Type.OBJECT,
-      properties: {
-        majorGoal: stringArraySchema,
-        aiGoal: stringArraySchema,
-        tools: stringArraySchema,
-        procedures: stringArraySchema,
-        deliverables: stringArraySchema,
-        usageRules: stringArraySchema,
-      },
-      required: ['majorGoal', 'aiGoal', 'tools', 'procedures', 'deliverables', 'usageRules'],
-    },
+    moduleDesign: moduleDesignSchema,
     aiToolSafetyRows: {
       type: Type.ARRAY,
       items: {
@@ -314,6 +326,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: '필수 교과목 입력 정보가 누락되었습니다.' }, { status: 400 });
     }
 
+    // 이름이 입력된 추가 모듈만 사용
+    const extraModules = (input.additionalModules ?? []).filter((m) => m?.moduleName?.trim());
+    const extraModuleLines = extraModules
+      .map(
+        (m, i) =>
+          `- 추가 완결형 AI-X 모듈 ${i + 2}: ${m.moduleName} (${m.moduleWeeks}) / 산출물: ${m.finalDeliverable} / 활용 AI 도구: ${m.primaryTools}`
+      )
+      .join('\n');
+
     const scores = input.facultyScores || Array(20).fill(3);
     const s1 = avgOf(scores.slice(0, 4));
     const s2 = avgOf(scores.slice(4, 8));
@@ -353,7 +374,7 @@ export async function POST(req: NextRequest) {
 - 교원 자가진단 영역별 점수: ①AI기초(${s1}, ${calcStage(s1)}), ②융합설계(${s2}, ${calcStage(s2)}), ③수업운영(${s3}, ${calcStage(s3)}), ④AI윤리(${s4}, ${calcStage(s4)}), ⑤성찰계발(${s5}, ${calcStage(s5)})
 - 학생 비계 지원 메모: ${input.scaffoldingNote}
 - 15주 수업 개요 메모: ${input.syllabusOutline}
-- 핵심 완결형 AI-X 모듈: ${input.moduleName} (${input.moduleWeeks})
+- 핵심 완결형 AI-X 모듈${extraModules.length ? ' 1(대표)' : ''}: ${input.moduleName} (${input.moduleWeeks})
 - 최종 학생 산출물: ${input.finalDeliverable}
 - 활용 AI 도구: ${input.primaryTools}
 - 다차원 루브릭 배점(%): 전공문제이해(${input.rubricWeights[0]}), AI활용전략(${input.rubricWeights[1]}), 과정투명성(${input.rubricWeights[2]}), 결과검증(${input.rubricWeights[3]}), 인간판단·수정(${input.rubricWeights[4]}), AI윤리·보안(${input.rubricWeights[5]}), 최종산출물(${input.rubricWeights[6]})
@@ -361,10 +382,25 @@ export async function POST(req: NextRequest) {
 - 형성평가 방식: ${input.formativeFeedbackType === 'rag_kb' ? '2단계: 교과목 전용 RAG 지식베이스 피드백' : '1단계: 수업자료·루브릭 프롬프트 첨부 LLM 피드백'}
 - 2027학년도 개설 학기 / 정원 / 환경: ${input.openSemester} / ${input.expectedCapacity} / ${input.classroomEnv}
 - 선수과목 / 후속과목: ${input.prevCourseName || '기초 교양 AI 교과'} / ${input.nextCourseName || '전공 심화 캡스톤디자인 및 AX 마이크로디그리'}
-- 디지털 배지 키워드: ${input.badgeKeywords}`;
+- 디지털 배지 키워드: ${input.badgeKeywords}${extraModuleLines ? `\n${extraModuleLines}` : ''}`;
 
     // 전반부(Part 1)와 후반부(Part 2)를 동시에 병렬 생성하여 응답 시간을 절반 이하로 단축
-    const [resPart1, resPart2] = await Promise.all([
+    // 추가 모듈이 있으면 모듈별 6대 요소를 별도로 병렬 생성
+    const extraModulesPromise = extraModules.length
+      ? ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: `다음 교과목의 추가 완결형 AI-X 모듈 ${extraModules.length}개 각각에 대해 [표 Ⅱ-3.2] 완결형 AI-X 모듈 상세 설계서의 6대 요소(전공목표, AI활용목표, 도구, 활동절차(차시별), 산출물, 사용규칙)를 작성하세요. modules 배열은 아래 추가 모듈 순서대로 정확히 ${extraModules.length}개를 채우고, 대표 모듈과 내용이 겹치지 않게 각 모듈의 주차·산출물·도구에 맞춰 작성합니다.\n${extraModuleLines}\n${commonContext}`,
+          config: {
+            systemInstruction,
+            responseMimeType: 'application/json',
+            responseSchema: extraModulesSchema,
+            temperature: 0.35,
+            thinkingConfig: { thinkingBudget: 0 },
+          },
+        })
+      : Promise.resolve(null);
+
+    const [resPart1, resPart2, resExtra] = await Promise.all([
       ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: `다음 교과목 정보를 바탕으로 보고서 전반부(연구 요약, Ⅰ장 배경·로드맵, Ⅱ-1장 연계·목표·5대요건, Ⅱ-2장 학생 비계 전략·교원 역량 계발 계획)를 생성하세요. 각 항목은 설계 근거와 운영 전략이 담긴 2~3줄 개조식으로 작성합니다.\n${commonContext}`,
@@ -378,7 +414,7 @@ export async function POST(req: NextRequest) {
       }),
       ai.models.generateContent({
         model: 'gemini-2.5-flash',
-        contents: `다음 교과목 정보를 바탕으로 보고서 후반부(Ⅱ-3장 15주 전체 수업계획·완결형 모듈 6대 요소·도구 안전성, Ⅱ-4장 7대 루브릭·과정증빙 예시·형성평가 프롬프트, Ⅱ-5장 디지털 배지·2027 정규개설/CQI, Ⅳ장 결론·기대효과)를 생성하세요. weeklyPlans는 1~15주(15개), rubricLevels는 7개를 정확히 채우세요.\n${commonContext}`,
+        contents: `다음 교과목 정보를 바탕으로 보고서 후반부(Ⅱ-3장 15주 전체 수업계획·완결형 모듈 6대 요소·도구 안전성, Ⅱ-4장 7대 루브릭·과정증빙 예시·형성평가 프롬프트, Ⅱ-5장 디지털 배지·2027 정규개설/CQI, Ⅳ장 결론·기대효과)를 생성하세요. weeklyPlans는 1~15주(15개), rubricLevels는 7개를 정확히 채우세요.${extraModules.length ? ' moduleDesign은 대표 모듈(모듈 1)만 작성하고, weeklyPlans의 비고(note)와 conclusionSummary.moduleSummary에는 추가 모듈까지 모두 반영하세요.' : ''}\n${commonContext}`,
         config: {
           systemInstruction,
           responseMimeType: 'application/json',
@@ -387,6 +423,7 @@ export async function POST(req: NextRequest) {
           thinkingConfig: { thinkingBudget: 0 },
         },
       }),
+      extraModulesPromise,
     ]);
 
     if (!resPart1.text || !resPart2.text) {
@@ -395,6 +432,21 @@ export async function POST(req: NextRequest) {
 
     const p1 = safeParseJson(resPart1.text);
     const p2 = safeParseJson(resPart2.text);
+    const pExtra = resExtra?.text ? safeParseJson(resExtra.text) : null;
+    const emptyModule = {
+      majorGoal: [],
+      aiGoal: [],
+      tools: [],
+      procedures: [],
+      deliverables: [],
+      usageRules: [],
+    };
+    const additionalModuleDesigns = extraModules.map((m, i) => ({
+      ...emptyModule,
+      ...(pExtra?.modules?.[i] ?? {}),
+      moduleName: m.moduleName,
+      moduleScheduleNote: m.moduleWeeks,
+    }));
 
     const finalReport: AiXReportData = {
       researchType: input.researchType,
@@ -440,6 +492,7 @@ export async function POST(req: NextRequest) {
         moduleScheduleNote: input.moduleWeeks,
         ...p2.moduleDesign,
       },
+      additionalModuleDesigns,
       aiToolSafetyRows: p2.aiToolSafetyRows || [],
 
       rubricRows: DEFAULT_RUBRIC_WEIGHTS.map((base, idx) => ({
@@ -459,6 +512,7 @@ export async function POST(req: NextRequest) {
       conclusionSummary: {
         moduleSummary: p2.conclusionSummary?.moduleSummary || [
           `${input.moduleName} (${input.moduleWeeks})`,
+          ...extraModules.map((m) => `${m.moduleName} (${m.moduleWeeks})`),
         ],
         humanAccountabilityWeight: humanAccWeight,
         finalProductWeight: finalProdWeight,
